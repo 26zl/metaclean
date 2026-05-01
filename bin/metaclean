@@ -1,0 +1,29 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# ───────────────────────────────────────────────────────────────────────────
+# bin/metaclean — entry point invoked by the user's shell.
+#
+# The shebang `#!/usr/bin/env ruby` makes the file executable on macOS/Linux
+# (after `chmod +x`). `env` looks up Ruby on PATH so it works regardless of
+# where Ruby is installed (Homebrew, rbenv, asdf, etc.).
+#
+# `frozen_string_literal: true` is a Ruby 3 magic comment: every string in
+# this file is implicitly frozen (immutable). This prevents accidental
+# mutation and gives a small performance/memory win.
+# ───────────────────────────────────────────────────────────────────────────
+
+# Add `<repo>/lib` to Ruby's load path so `require 'metaclean'` finds our code
+# without needing the gem installed. `__dir__` is the directory of this file
+# (`bin/`), so `../lib` is the sibling `lib/` directory. `expand_path` turns
+# the relative path into an absolute one.
+$LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
+
+# Pull in the whole library. See `lib/metaclean.rb` — that file `require`s
+# every sub-component in dependency order.
+require 'metaclean'
+
+# Hand control to the CLI. `ARGV` is Ruby's built-in array of command-line
+# arguments (everything after the script name). `CLI.start` parses them and
+# decides what to do.
+Metaclean::CLI.start(ARGV)

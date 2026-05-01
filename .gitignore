@@ -1,0 +1,31 @@
+# Ruby / Bundler
+*.gem
+*.rbc
+.bundle/
+.ruby-version
+.ruby-gemset
+vendor/bundle/
+Gemfile.lock
+
+# metaclean's own outputs (never want these committed)
+*_clean.*
+*_clean_*.*
+*.bak
+*.metaclean.tmp.*
+*.cleaned.*
+*.qpdf.tmp.*
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Test / build artefacts
+/tmp/
+/coverage/
+/pkg/
+/doc/
+.yardoc/

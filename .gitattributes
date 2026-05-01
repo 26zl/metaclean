@@ -1,0 +1,28 @@
+# Normalize line endings: text gets LF in the repo, autoconverted on Windows checkouts.
+* text=auto eol=lf
+
+# Explicit text formats (forces LF even if Git misdetects).
+*.rb       text eol=lf
+*.gemspec  text eol=lf
+*.md       text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+Gemfile    text eol=lf
+Rakefile   text eol=lf
+
+# The CLI executable must keep LF endings or the shebang breaks on Unix.
+bin/*      text eol=lf
+
+# Treat common binary fixture types as binary so Git doesn't try to diff them.
+*.jpg  binary
+*.jpeg binary
+*.png  binary
+*.gif  binary
+*.pdf  binary
+*.zip  binary
+*.mp3  binary
+*.mp4  binary
+
+# Linguist hints — keep GitHub's language stats focused on Ruby code.
+bin/*    linguist-language=Ruby
+*.gemspec linguist-language=Ruby
