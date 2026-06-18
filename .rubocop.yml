@@ -1,0 +1,61 @@
+# metaclean predates RuboCop and has a deliberate, consistent house style.
+# We tune the linter to the code (not the code to RuboCop defaults): the
+# metric/shape cops are relaxed, and the handful of style cops below are
+# disabled where they only disagree with an intentional choice. The genuinely
+# useful Lint/Layout correctness cops stay on.
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - 'pkg/**/*'
+    - 'vendor/**/*'
+    - 'tmp/**/*'
+    - 'test/**/*' # tests favor readability over the library's strict style
+
+# Long, heavily-commented methods are a deliberate choice in a small CLI.
+Metrics:
+  Enabled: false
+
+Layout/LineLength:
+  Max: 130
+
+# --- Cops disabled to match the established house style ---
+Style/Documentation:
+  Enabled: false # documented with header comment blocks, not class rdoc
+Style/RescueStandardError:
+  Enabled: false # `rescue StandardError` for realpath fallbacks is intentional
+Style/SingleLineMethods:
+  Enabled: false # Display.section/info/success/... are deliberately one line
+Style/Semicolon:
+  Enabled: false # `puts o; exit` one-liners in the option parser
+Style/StringLiterals:
+  Enabled: false # double quotes used for the ✓/⚠/▸ glyph output lines
+Style/FormatStringToken:
+  Enabled: false # `%-38s` column formatting is clearer unannotated
+Style/ConcatArrayLiterals:
+  Enabled: false # `args.concat([...])` reads as "append these args"
+Style/RedundantFreeze:
+  Enabled: false # every constant is frozen for consistency
+Style/HashExcept:
+  Enabled: false # explicit `reject { |k, _| k == 'SourceFile' }` is clear
+Style/GuardClause:
+  Enabled: false
+Style/IfUnlessModifier:
+  Enabled: false
+Naming/MethodParameterName:
+  Enabled: false # short params (c(text), v, n, k) suit these tiny helpers
+Layout/HashAlignment:
+  Enabled: false # hashes align values, not keys
+Layout/SpaceAfterSemicolon:
+  Enabled: false # goes with the one-line Display helpers
+Layout/EmptyLinesAroundAccessModifier:
+  Enabled: false # module_function placement is intentional
+Layout/ExtraSpacing:
+  Enabled: false # aligned trailing assignments
+Lint/NonAtomicFileOperation:
+  Enabled: false # the exist?-then-delete cleanup is intentional and guarded
+
+# --- Packaging ---
+Gemspec/DevelopmentDependencies:
+  Enabled: false # dev deps live in the Gemfile, not the gemspec

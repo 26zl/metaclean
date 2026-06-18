@@ -1,0 +1,58 @@
+name: CI
+
+# Runs on every push and pull request so a regression in the strip/verify
+# logic is caught before it can be tagged and released.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least-privilege default: these jobs only read the repo. Without this, every job
+# inherits the broad default GITHUB_TOKEN scopes (flagged by CodeQL).
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Ruby ${{ matrix.ruby }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        # Exercise the declared support floor (>= 3.2) through the current major.
+        ruby: ['3.2', '3.3', '3.4', '4.0']
+        # A macOS leg covers the non-Linux POSIX path. Native Windows isn't
+        # supported (use WSL2, which is Linux), so there's no Windows leg.
+        include:
+          - os: macos-latest
+            ruby: '3.4'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      # Install the real tools so the integration tests exercise the ACTUAL
+      # strip/verify flow instead of auto-skipping. Linux is the primary leg and
+      # must succeed; the macOS install is best-effort (the suite auto-skips any
+      # missing tool), so a hiccup in a third-party formula doesn't fail the run.
+      - name: Install metadata tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf
+      - name: Install metadata tools (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: brew install exiftool qpdf mat2
+      - run: bundle exec rake test
+
+  lint:
+    name: RuboCop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - run: bundle exec rubocop

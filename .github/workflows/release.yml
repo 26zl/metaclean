@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Least-privilege default for the verify job (read-only). The build job overrides
+# this with the contents:write + id-token:write it needs to publish.
+permissions:
+  contents: read
+
+jobs:
+  # Gate: a tag must pass the full test suite, lint, and a dependency CVE audit
+  # before anything is built or published. A direct `git push --tags` can no
+  # longer ship an artifact that CI never validated.
+  verify:
+    name: Verify before release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Install metadata tools (exiftool, mat2, qpdf)
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf
+      - run: bundle exec rake test
+      - run: bundle exec rubocop
+      - run: bundle exec bundler-audit check --update
+
+  build:
+    name: Build & publish gem
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
+      - name: Build gem
+        run: bundle exec rake build
+
+      - name: Upload gem as workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: metaclean-gem
+          path: pkg/*.gem
+
+      - name: Attach gem to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+        with:
+          files: pkg/*.gem
+          generate_release_notes: true
+
+      - name: Publish to RubyGems via Trusted Publisher
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: rubygems/release-gem@052cc82692552de3ef2b81fd670e41d13cba8092 # v1
