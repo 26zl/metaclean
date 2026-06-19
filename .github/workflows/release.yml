@@ -23,8 +23,19 @@ jobs:
         with:
           ruby-version: '3.4'
           bundler-cache: true
-      - name: Install metadata tools (exiftool, mat2, qpdf)
-        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf
+      # A tag must match the gem version, or `rake release` would tag/publish the
+      # version in version.rb (not the pushed tag) — shipping the wrong or a
+      # duplicate version. Fail fast on mismatch.
+      - name: Verify pushed tag matches gem version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(ruby -r ./lib/metaclean/version -e 'print Metaclean::VERSION')
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match gem version v${version}"
+            exit 1
+          fi
+      - name: Install metadata tools (exiftool, mat2, qpdf, ffmpeg)
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg
       - run: bundle exec rake test
       - run: bundle exec rubocop
       - run: bundle exec bundler-audit check --update

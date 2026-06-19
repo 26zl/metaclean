@@ -25,9 +25,27 @@ bundle exec rubocop       # lint (must be clean)
 ```
 
 The pure unit tests run without any external tools. The integration tests in
-`test/test_integration.rb` **auto-skip** unless `exiftool`, `mat2`, and `qpdf`
-are on your `PATH`; install them (see the README) to exercise the real
-strip/verify flow locally. CI installs all three on Linux.
+`test/test_integration.rb` **auto-skip** unless `exiftool`, `mat2`, `qpdf`, and
+`ffmpeg` are on your `PATH`; install them (see the README) to exercise the real
+strip/verify flow locally. CI installs all four on Linux.
+
+### The "every format" matrix
+
+`test/test_format_matrix.rb` generates a real sample of **every** format
+metaclean routes (images, audio, video, PDF, archives, Office/OpenDocument),
+cleans it, and asserts the core guarantee — a file reported `:cleaned` never
+keeps its metadata (no false-clean), media stays byte-identical, and a format no
+tool can clean (e.g. SVG on a mat2 build that crashes on it) fails *closed*. It
+is **opt-in** (it also needs file generators and is slower), so set an env var:
+
+```bash
+METACLEAN_FORMAT_MATRIX=1 bundle exec ruby -Itest test/test_format_matrix.rb
+```
+
+It needs the four cleaning tools plus `convert` (ImageMagick), `ffmpeg`,
+`ghostscript`, `zip`/`unzip`, and — for the Office formats — `soffice`
+(LibreOffice). Any format whose generator is missing auto-skips. The dedicated
+`format-matrix` CI job runs the whole thing on every push.
 
 ## Pull requests
 

@@ -15,6 +15,7 @@ require 'metaclean/display'   # ANSI colors and formatters (no deps)
 require 'metaclean/exiftool'  # ExifTool wrapper
 require 'metaclean/mat2'      # mat2 wrapper
 require 'metaclean/qpdf'      # qpdf wrapper
+require 'metaclean/ffmpeg'    # ffmpeg wrapper (Matroska video: mkv/webm)
 require 'metaclean/strategy'  # picks which tools run for each file type
 require 'metaclean/runner'    # orchestrates a clean across many files
 require 'metaclean/cli'       # parses ARGV and calls Runner
@@ -25,9 +26,9 @@ module Metaclean
   # catching things like NoMemoryError or SystemExit.
   class Error < StandardError; end
 
-  # Raised by ensure_tools! when any of the three required external tools is not
-  # on PATH. metaclean runs ExifTool, mat2 and qpdf together and refuses to run
-  # without all of them.
+  # Raised by ensure_tools! when any of the four required external tools is not
+  # on PATH. metaclean runs ExifTool, mat2, qpdf and ffmpeg together and refuses
+  # to run without all of them.
   class ToolsMissing < Error; end
 
   # A path beginning with "-" is misread as an *option* by the tools we shell
@@ -41,7 +42,7 @@ module Metaclean
     s.start_with?('-') ? File.join('.', s) : s
   end
 
-  # Preflight: all three tools must be installed. We run them together for full
+  # Preflight: all four tools must be installed. We run them together for full
   # coverage and to verify the strip, so a partial toolchain is not "good enough"
   # — bail with one clear message naming what's missing and how to install
   # everything. Called once by the CLI before any inspect/clean work.
@@ -50,16 +51,17 @@ module Metaclean
     missing << 'exiftool' unless Exiftool.available?
     missing << 'mat2'     unless Mat2.available?
     missing << 'qpdf'     unless Qpdf.available?
+    missing << 'ffmpeg'   unless Ffmpeg.available?
     return if missing.empty?
 
     raise ToolsMissing, <<~MSG
       Missing required tool(s): #{missing.join(', ')}
 
-      metaclean needs ExifTool, mat2 and qpdf together. Install all three:
-        macOS:          brew install exiftool mat2 qpdf
-        Debian/Ubuntu:  sudo apt install libimage-exiftool-perl mat2 qpdf
-        Fedora:         sudo dnf install perl-Image-ExifTool mat2 qpdf
-        Arch:           sudo pacman -S perl-image-exiftool mat2 qpdf
+      metaclean needs ExifTool, mat2, qpdf and ffmpeg together. Install all four:
+        macOS:          brew install exiftool mat2 qpdf ffmpeg
+        Debian/Ubuntu:  sudo apt install libimage-exiftool-perl mat2 qpdf ffmpeg
+        Fedora:         sudo dnf install perl-Image-ExifTool mat2 qpdf ffmpeg
+        Arch:           sudo pacman -S perl-image-exiftool mat2 qpdf ffmpeg
         Windows:        use WSL2 (https://learn.microsoft.com/windows/wsl/install) + the Debian/Ubuntu line
     MSG
   end

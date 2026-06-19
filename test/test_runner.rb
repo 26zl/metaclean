@@ -10,6 +10,10 @@ class RunnerTest < Minitest::Test
     @r = Metaclean::Runner.new({})
   end
 
+  def metaclean_temps(dir)
+    Dir.children(dir).grep(/\.metaclean\.tmp\./)
+  end
+
   # Metaclean.safe_path (argument-injection guard)
   def test_safe_path
     assert_equal 'photo.jpg', Metaclean.safe_path('photo.jpg')
@@ -18,15 +22,19 @@ class RunnerTest < Minitest::Test
     assert_equal './-x',      Metaclean.safe_path('./-x')
   end
 
-  # ensure_tools!: all three tools are required; a partial toolchain fails fast
-  # with a message naming what's missing.
+  # ensure_tools!: all FOUR tools are required; a partial toolchain fails fast
+  # with a message naming what's missing. Every tool is stubbed so the result
+  # never silently depends on what happens to be installed on the host/CI runner.
   def test_ensure_tools_raises_listing_missing
     Metaclean::Exiftool.stub(:available?, true) do
       Metaclean::Mat2.stub(:available?, false) do
         Metaclean::Qpdf.stub(:available?, false) do
-          err = assert_raises(Metaclean::ToolsMissing) { Metaclean.ensure_tools! }
-          assert_match(/mat2/, err.message)
-          assert_match(/qpdf/, err.message)
+          Metaclean::Ffmpeg.stub(:available?, false) do
+            err = assert_raises(Metaclean::ToolsMissing) { Metaclean.ensure_tools! }
+            assert_match(/mat2/, err.message)
+            assert_match(/qpdf/, err.message)
+            assert_match(/ffmpeg/, err.message)
+          end
         end
       end
     end
@@ -36,7 +44,9 @@ class RunnerTest < Minitest::Test
     Metaclean::Exiftool.stub(:available?, true) do
       Metaclean::Mat2.stub(:available?, true) do
         Metaclean::Qpdf.stub(:available?, true) do
-          assert_nil Metaclean.ensure_tools!
+          Metaclean::Ffmpeg.stub(:available?, true) do
+            assert_nil Metaclean.ensure_tools!
+          end
         end
       end
     end
@@ -64,7 +74,7 @@ class RunnerTest < Minitest::Test
 
   def test_staging_path_keeps_extension_last
     p = @r.send(:staging_path_for, 'a/b/photo.jpg')
-    assert p.start_with?('a/b/photo.metaclean.tmp.'), p
+    assert p.start_with?('a/b/.metaclean.tmp.'), p
     assert p.end_with?('.jpg'), p # mat2 dispatches on extension; must be last
   end
 
@@ -76,6 +86,19 @@ class RunnerTest < Minitest::Test
       assert_equal File.join(d, 'photo_clean_1.jpg'), @r.send(:collision_safe, target)
       File.write(File.join(d, 'photo_clean_1.jpg'), 'x')
       assert_equal File.join(d, 'photo_clean_2.jpg'), @r.send(:collision_safe, target)
+    end
+  end
+
+  def test_copy_file_exclusive_refuses_symlink_source
+    Dir.mktmpdir do |d|
+      real = File.join(d, 'real.jpg')
+      link = File.join(d, 'link.jpg')
+      dest = File.join(d, 'out.jpg')
+      File.write(real, 'x')
+      File.symlink(real, link)
+
+      assert_raises(Metaclean::Error) { @r.send(:copy_file_exclusive, link, dest) }
+      refute File.exist?(dest), 'failed exclusive copy must not leave an output file'
     end
   end
 
@@ -197,7 +220,7 @@ class RunnerTest < Minitest::Test
       refute File.exist?(File.join(d, 'photo_clean.jpg')),
              'a file with a surviving privacy tag must not be written'
       assert_equal 'original-bytes', File.read(src), 'original must be left untouched'
-      assert_empty Dir.glob(File.join(d, '*.metaclean.tmp.*')), 'staging temp must be cleaned up'
+      assert_empty metaclean_temps(d), 'staging temp must be cleaned up'
       assert_match(/not writing output/, out)
     end
   end
@@ -221,7 +244,7 @@ class RunnerTest < Minitest::Test
       end
 
       refute File.exist?(File.join(d, 'photo_clean.jpg'))
-      assert_empty Dir.glob(File.join(d, '*.metaclean.tmp.*'))
+      assert_empty metaclean_temps(d)
     end
   end
 
@@ -246,6 +269,44 @@ class RunnerTest < Minitest::Test
       end
 
       assert File.exist?(File.join(d, 'photo_clean.jpg')), 'a genuinely clean file should be written'
+    end
+  end
+
+  # If another process creates the preferred _clean name between resolve_final_path
+  # and commit, metaclean must pick a suffix instead of overwriting user data.
+  def test_clean_one_default_output_does_not_clobber_late_collision
+    Dir.mktmpdir do |d|
+      src = File.join(d, 'photo.jpg')
+      preferred = File.join(d, 'photo_clean.jpg')
+      File.write(src, 'original-bytes')
+
+      capture_io do
+        @r.stub(:read_metadata, {}) do
+          Metaclean::Strategy.stub(:tools_for, [:exiftool]) do
+            @r.stub(:run_tool, ->(t, p) { File.write(preferred, 'user-file'); File.write(p, 'clean'); { tool: t, ok: true } }) do
+              assert_equal :cleaned, @r.send(:clean_one, src, index: 1, total: 1)[:status]
+            end
+          end
+        end
+      end
+
+      assert_equal 'user-file', File.read(preferred), 'late-created _clean file must not be overwritten'
+      assert_equal 'clean', File.read(File.join(d, 'photo_clean_1.jpg'))
+    end
+  end
+
+  def test_default_commit_falls_back_when_hardlinks_are_unavailable
+    Dir.mktmpdir do |d|
+      staging = File.join(d, '.metaclean.tmp.test.jpg')
+      final = File.join(d, 'photo_clean.jpg')
+      File.write(staging, 'clean')
+
+      File.stub(:link, ->(*) { raise Errno::EPERM }) do
+        assert_equal final, @r.send(:link_with_collision_safe_name, staging, final)
+      end
+
+      assert_equal 'clean', File.read(final)
+      refute File.exist?(staging)
     end
   end
 
@@ -395,21 +456,49 @@ class RunnerTest < Minitest::Test
       assert_equal :cleaned, res[:status]
       assert_equal 'cleaned-bytes', File.read(src), 'the original is overwritten in place'
       assert_equal 'original-bytes', File.read("#{src}.bak"), 'a .bak preserves the original bytes'
-      assert_empty Dir.glob(File.join(d, '*.metaclean.tmp.*'))
+      assert_empty metaclean_temps(d)
     end
   end
 
+  # A failed in-place rename leaves the original intact and removes the redundant
+  # .bak. This also GUARDS against regressing the commit from atomic File.rename
+  # back to FileUtils.mv: if FileUtils.mv were used, stubbing File.rename to raise
+  # EPERM would be swallowed by mv's truncating copy-fallback (no exception, and
+  # the original would read 'cleaned-bytes') — both assertions below would fail.
   def test_clean_one_in_place_failed_rename_leaves_original_and_no_stray_bak
     Dir.mktmpdir do |d|
       src = File.join(d, 'photo.jpg')
       File.write(src, 'original-bytes')
       r = Metaclean::Runner.new(in_place: true)
-      FileUtils.stub(:mv, ->(*) { raise Errno::EACCES }) do
-        assert_raises(Errno::EACCES) { run_in_place(r, src, 'cleaned-bytes') }
+      File.stub(:rename, ->(*) { raise Errno::EPERM }) do
+        assert_raises(Errno::EPERM) { run_in_place(r, src, 'cleaned-bytes') }
       end
-      assert_equal 'original-bytes', File.read(src), 'a failed commit leaves the original intact'
+      assert_equal 'original-bytes', File.read(src), 'a failed rename leaves the original intact'
       refute File.exist?("#{src}.bak"), 'the now-redundant .bak is removed when the rename fails'
-      assert_empty Dir.glob(File.join(d, '*.metaclean.tmp.*')), 'the staging temp is cleaned up'
+      assert_empty metaclean_temps(d), 'the staging temp is cleaned up'
+    end
+  end
+
+  def test_clean_one_in_place_interrupt_after_rename_keeps_backup
+    Dir.mktmpdir do |d|
+      src = File.join(d, 'photo.jpg')
+      File.write(src, 'original-bytes')
+      r = Metaclean::Runner.new(in_place: true)
+
+      # Simulate the rename completing (original replaced, staging consumed) and an
+      # Interrupt landing immediately after, before `committed = true`. binwrite/
+      # delete move the bytes without recursing into the stubbed File.rename.
+      File.stub(:rename, lambda { |from, to|
+        File.binwrite(to, File.binread(from))
+        File.delete(from)
+        raise Interrupt
+      }) do
+        assert_raises(Interrupt) { run_in_place(r, src, 'cleaned-bytes') }
+      end
+
+      assert_equal 'cleaned-bytes', File.read(src), 'rename already completed'
+      assert_equal 'original-bytes', File.read("#{src}.bak"), 'backup must survive a post-rename interrupt'
+      assert_empty metaclean_temps(d), 'the staging temp is gone after the completed rename'
     end
   end
 
@@ -425,5 +514,177 @@ class RunnerTest < Minitest::Test
       assert_equal 'v2', File.read(File.join(d, 'photo.jpg_1.bak')),
                    'a second in-place run does not clobber the first backup'
     end
+  end
+
+  def test_clean_one_in_place_does_not_clobber_late_backup_collision
+    Dir.mktmpdir do |d|
+      src = File.join(d, 'photo.jpg')
+      backup = "#{src}.bak"
+      File.write(src, 'original-bytes')
+      r = Metaclean::Runner.new(in_place: true)
+
+      r.stub(:copy_file_exclusive, ->(from, to, preserve: false) {
+        File.write(backup, 'user-backup') if to == backup && !File.exist?(backup)
+        raise Errno::EEXIST if File.exist?(to)
+
+        File.binwrite(to, File.binread(from))
+      }) do
+        run_in_place(r, src, 'cleaned-bytes')
+      end
+
+      assert_equal 'user-backup', File.read(backup), 'late-created .bak must not be overwritten'
+      assert_equal 'original-bytes', File.read(File.join(d, 'photo.jpg_1.bak'))
+      assert_equal 'cleaned-bytes', File.read(src)
+    end
+  end
+
+  # --- run_tool dispatch (the symbol → wrapper → result-hash mapping) ---
+
+  # The :ffmpeg branch maps a successful Matroska strip to an ok result, so
+  # tools_succeeded? sees it and the mkv can reach :cleaned.
+  def test_run_tool_ffmpeg_success
+    capture_io do
+      Metaclean::Ffmpeg.stub(:strip!, true) do
+        assert_equal({ tool: :ffmpeg, ok: true }, @r.send(:run_tool, :ffmpeg, 'v.mkv'))
+      end
+    end
+  end
+
+  # A raising tool is CAUGHT (never aborts the batch) and recorded ok:false, so a
+  # failed strip can never be mistaken for a clean. The multi-line message is fine.
+  def test_run_tool_ffmpeg_error_is_caught_not_raised
+    res = nil
+    capture_io do
+      Metaclean::Ffmpeg.stub(:strip!, ->(_p) { raise Metaclean::Error, "boom\nstack\ntrace" }) do
+        res = @r.send(:run_tool, :ffmpeg, 'v.mkv')
+      end
+    end
+    assert_equal :ffmpeg, res[:tool]
+    refute res[:ok]
+  end
+
+  # run_tool :exiftool forwards the privacy-tag list as also_delete: so IFD0 tags
+  # that exiftool's -all= leaves behind (TIFF/DNG) still get explicitly deleted.
+  def test_run_tool_exiftool_forwards_also_delete
+    seen = :unset
+    capture_io do
+      Metaclean::Exiftool.stub(:strip!, ->(_p, also_delete:) { seen = also_delete; true }) do
+        @r.send(:run_tool, :exiftool, 'a.tiff')
+      end
+    end
+    assert_equal Metaclean::Strategy::PRIVACY_TAGS, seen
+  end
+
+  # Matroska is ffmpeg-only: a single ok ffmpeg result with empty residual must
+  # reach :cleaned (not :unverified) — mat2 isn't essential for mkv/webm.
+  def test_finalize_cleaned_for_ffmpeg_only_mkv
+    res = @r.send(:finalize_result, [{ tool: :ffmpeg, ok: true }], {}, {}, {}, file: 'clip.mkv')
+    assert_equal :cleaned, res[:status]
+  end
+
+  # RIFF (avi/wav) and SVG: ExifTool can't WRITE them (soft-skip), but mat2 ran
+  # and stripped — like Office docs, that's a confident :cleaned, not :unverified
+  # (none of them are MAT2_ESSENTIAL, so mat2_coverage_gap? doesn't apply).
+  def test_finalize_cleaned_when_exiftool_soft_skips_riff_or_svg
+    %w[clip.avi clip.wav pic.svg].each do |f|
+      results = [{ tool: :mat2, ok: true }, { tool: :exiftool, ok: false, skipped: true, note: :unsupported }]
+      assert_equal :cleaned, @r.send(:finalize_result, results, {}, {}, {}, file: f)[:status], f
+    end
+  end
+
+  # End-to-end: an mkv routed solely to ffmpeg, cleaned with empty residual, is
+  # written and reported :cleaned.
+  def test_clean_one_mkv_via_ffmpeg_writes_cleaned
+    Dir.mktmpdir do |d|
+      src = File.join(d, 'video.mkv')
+      File.write(src, 'original')
+      capture_io do
+        Metaclean::Exiftool.stub(:available?, true) do
+          @r.stub(:read_metadata, {}) do
+            Metaclean::Strategy.stub(:tools_for, [:ffmpeg]) do
+              @r.stub(:run_tool, { tool: :ffmpeg, ok: true }) do
+                assert_equal :cleaned, @r.send(:clean_one, src, index: 1, total: 1)[:status]
+              end
+            end
+          end
+        end
+      end
+      assert File.exist?(File.join(d, 'video_clean.mkv'))
+    end
+  end
+
+  # --- --dry-run: a primary safety mode that must write absolutely nothing ---
+  def test_clean_one_dry_run_writes_nothing
+    Dir.mktmpdir do |d|
+      src = File.join(d, 'photo.jpg')
+      File.write(src, 'original')
+      r = Metaclean::Runner.new(dry_run: true)
+      capture_io do
+        Metaclean::Exiftool.stub(:available?, true) do
+          r.stub(:read_metadata, {}) do
+            Metaclean::Strategy.stub(:tools_for, [:exiftool]) do
+              r.stub(:run_tool, { tool: :exiftool, ok: true }) do
+                r.send(:clean_one, src, index: 1, total: 1)
+              end
+            end
+          end
+        end
+      end
+      refute File.exist?(File.join(d, 'photo_clean.jpg')), 'dry-run writes no output'
+      assert_equal 'original', File.read(src), 'dry-run leaves the original untouched'
+      assert_empty metaclean_temps(d), 'dry-run leaves no staging temp'
+    end
+  end
+
+  # --- symlink skip in expand_files (a security invariant) ---
+  def test_expand_files_skips_symlink_argument
+    Dir.mktmpdir do |d|
+      real = File.join(d, 'real.jpg')
+      File.write(real, 'x')
+      link = File.join(d, 'link.jpg')
+      File.symlink(real, link)
+      assert_equal ['real.jpg'], expand({}, [link, real]) # the symlink is excluded
+    end
+  end
+
+  def test_expand_files_skips_symlinked_file_in_directory
+    Dir.mktmpdir do |d|
+      File.write(File.join(d, 'a.jpg'), 'x')
+      File.symlink(File.join(d, 'a.jpg'), File.join(d, 'b.jpg'))
+      assert_equal ['a.jpg'], expand({}, [d]) # collect_dir skips the symlink child
+    end
+  end
+
+  # --- confirmation prompt: proceed only on y/yes, abort on anything else ---
+  # (incl. nil from Ctrl-D) so a bare Enter never silently overwrites files.
+  def run_with_stdin(input)
+    r = Metaclean::Runner.new({}) # not force, not dry_run → prompt shows
+    ran = []
+    orig = $stdin
+    $stdin = StringIO.new(input)
+    capture_io do
+      r.stub(:expand_files, ['photo.jpg']) do
+        r.stub(:announce_tools, nil) do
+          r.stub(:clean_one, ->(*) { ran << :ran; { status: :cleaned, removed: 0, residual: 0 } }) do
+            r.clean_paths(['photo.jpg'])
+          end
+        end
+      end
+    end
+    ran
+  ensure
+    $stdin = orig
+  end
+
+  def test_confirmation_prompt_proceeds_on_yes
+    assert_equal [:ran], run_with_stdin("y\n")
+  end
+
+  def test_confirmation_prompt_aborts_on_blank_enter
+    assert_empty run_with_stdin("\n")
+  end
+
+  def test_confirmation_prompt_aborts_on_eof
+    assert_empty run_with_stdin('') # gets => nil, as on Ctrl-D
   end
 end

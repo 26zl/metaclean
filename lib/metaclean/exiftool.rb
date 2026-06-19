@@ -99,12 +99,16 @@ module Metaclean
       end
     end
 
-    # ExifTool can READ many formats it cannot WRITE — the ZIP-based documents
-    # (docx/xlsx/pptx/odt/ods/odp/odg/odf/epub) are read-only, and mat2 owns the
-    # strip for them. ExifTool reports this as "...writing of X files is not yet
-    # supported". strip! returns :unsupported for that case so the runner treats
-    # it as a soft skip, not a pipeline failure, when mat2 already cleaned.
-    WRITE_UNSUPPORTED_RE = /not yet supported|writing of .* files/i
+    # ExifTool can READ many formats it cannot WRITE, and mat2 owns the strip for
+    # them: the ZIP-based documents (docx/xlsx/pptx/odt/ods/odp/odg/odf/epub) and
+    # the RIFF containers (avi/wav). ExifTool announces the inability with one of
+    # a few phrasings — "writing of X files is not yet supported", "does not yet
+    # support writing of …", or "Can't currently write RIFF … files" — so we
+    # match all of them. strip! returns :unsupported in these cases so the runner
+    # treats it as a soft skip (mat2 does the actual strip), NOT a pipeline
+    # failure that would wrongly pin an already-clean file at :unverified. This is
+    # safe because the post-strip residual re-read still gates the :cleaned status.
+    WRITE_UNSUPPORTED_RE = /not yet support|can't currently write|writing of .* files/i
 
     # Removes every removable tag, in place. Returns true on success,
     # :unsupported when ExifTool cannot write the format, and raises on failure.
@@ -113,10 +117,17 @@ module Metaclean
     # which deletes them. `-overwrite_original` makes ExifTool replace the file
     # directly instead of writing `file_original` next to it. `-api
     # largefilesupport=1` lets files larger than 4 GB through.
-    def strip!(path)
-      _out, err, status = Open3.capture3(
-        'exiftool', '-all=', '-overwrite_original', '-q', '-q', '-api', 'largefilesupport=1', Metaclean.safe_path(path)
-      )
+    def strip!(path, also_delete: [])
+      # `-all=` clears metadata, but for TIFF/DNG ExifTool refuses to delete the
+      # IFD0 directory and leaves its tags (Artist, Software, …) behind. So we
+      # ALSO delete the known privacy tags by name and clear the GPS group: both
+      # are no-ops where `-all=` already removed them (e.g. JPEG), but they make
+      # the strip complete AND lossless (no re-encode) for IFD0-preserving formats.
+      args = ['exiftool', '-all=', '-gps:all=']
+      also_delete.each { |tag| args << "-#{tag}=" }
+      args.concat(['-overwrite_original', '-q', '-q', '-api', 'largefilesupport=1', Metaclean.safe_path(path)])
+
+      _out, err, status = Open3.capture3(*args)
       return true if status.success?
       return :unsupported if err.match?(WRITE_UNSUPPORTED_RE)
 

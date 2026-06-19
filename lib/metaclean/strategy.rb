@@ -24,11 +24,12 @@ module Metaclean
     # identifying field such as Copyright is still caught by PRIVACY_TAGS below.)
     PRIVACY_GROUP_PREFIXES = %w[GPS XMP- MakerNotes IPTC IFD1].freeze
 
-    # Formats where ExifTool alone leaves document-internal metadata that only
-    # mat2's rebuild removes (and which ExifTool also can't fully re-read to
-    # verify). If mat2 won't run for one of these, the runner warns that
-    # coverage is reduced rather than reporting a confident "Cleaned".
-    MAT2_ESSENTIAL = %w[pdf docx xlsx pptx odt ods odp odg odf epub].freeze
+    # Formats ExifTool can't WRITE, so it leaves document-internal metadata only
+    # mat2's rebuild removes (and can't re-read to verify). If mat2 won't run for
+    # one of these, the runner warns coverage is reduced rather than reporting a
+    # confident "Cleaned". (PDF is NOT here: ExifTool writes PDF metadata and qpdf
+    # rebuilds the file, so PDF is fully handled and verifiable without mat2.)
+    MAT2_ESSENTIAL = %w[docx xlsx pptx odt ods odp odg odf epub].freeze
 
     # Specific tag NAMES (regardless of group) we never want to leak.
     # If exiftool reports e.g. "EXIF:Artist" we still flag it because of the
@@ -50,10 +51,26 @@ module Metaclean
 
     # File extensions where mat2 is meaningfully stricter than ExifTool and
     # should run first. For other formats, ExifTool is the broader expert.
+    # (mkv/webm are NOT here — see FFMPEG_FORMATS; no mat2/ExifTool path writes
+    # Matroska.)
     MAT2_PREFERRED = %w[
-      pdf docx xlsx pptx odt ods odp odg odf epub png svg
-      mp4 avi mkv mov webm
+      docx xlsx pptx odt ods odp odg odf epub png svg
+      mp4 avi
     ].freeze
+
+    # Matroska containers. ExifTool is read-only for them and mat2 has no
+    # Matroska parser, so neither can strip mkv/webm. ffmpeg is the only tool in
+    # the set that can — it remuxes the container dropping all metadata while
+    # copying every stream verbatim (lossless, no re-encode).
+    FFMPEG_FORMATS = %w[mkv webm].freeze
+
+    # Raster formats mat2 cannot strip without DAMAGING the file: it rebuilds via
+    # Pillow, which recompresses JPEG/WebP (visible quality loss — a clean
+    # wallpaper drops ~65% in size with no metadata to remove) and downconverts
+    # TIFF (16-bit → 8-bit). ExifTool strips all of these completely and IN PLACE
+    # (pixels byte-identical), so ExifTool owns them and mat2 is skipped —
+    # cleaning metadata must never silently damage the file.
+    MAT2_DEGRADES = %w[jpg jpeg webp tif tiff].freeze
 
     module_function
 
@@ -67,21 +84,29 @@ module Metaclean
       tools = []
 
       if ext == 'pdf'
-        # PDFs benefit from all three, in this order:
-        #   mat2 → cleans the high-level metadata + content streams it knows
-        #   exiftool → strips the Info dictionary (Author, Title, Producer)
-        #   qpdf → rebuilds the file, dropping any unreferenced bits
-        tools << :mat2 if Mat2.available?
+        # mat2 cleans PDFs by RASTERIZING every page (text → images): it destroys
+        # the text layer and balloons the file (~35×). So PDFs skip mat2 and use:
+        #   exiftool → strips the Info dictionary + XMP (Author, Title, Producer…)
+        #   qpdf → rebuilds the file, dropping unreferenced objects / old revisions
+        # Both are lossless and leave the text intact. (PDF JS/macros are out of
+        # scope — see README.)
         tools << :exiftool
         tools << :qpdf if Qpdf.available?
+      elsif FFMPEG_FORMATS.include?(ext)
+        # Matroska (mkv/webm): ffmpeg is the ONLY tool that can clean these.
+        # ExifTool still re-reads the result afterwards, so the residual check
+        # (the false-clean backstop) is not blind.
+        tools << :ffmpeg if Ffmpeg.available?
       elsif MAT2_PREFERRED.include?(ext) && Mat2.available?
         # Office docs, modern image/video containers — mat2 leads.
         tools << :mat2
         tools << :exiftool
       else
         # Everything else (JPEG, MP3, RAW, …) — ExifTool is the gold standard.
+        # mat2 still adds coverage for many, but NOT for rasters it would damage
+        # (MAT2_DEGRADES) — there ExifTool's in-place strip is complete and lossless.
         tools << :exiftool
-        tools << :mat2 if Mat2.supports?(path)
+        tools << :mat2 if Mat2.supports?(path) && !MAT2_DEGRADES.include?(ext)
       end
 
       tools
@@ -96,7 +121,7 @@ module Metaclean
     # "Artist" in EXIF). Combining the two keeps coverage broad without
     # having to enumerate every {group, tag} pair.
     def privacy_residual(meta)
-      meta.select do |k, _|
+      meta.select do |k, v|
         # Skip SourceFile and the System/File/etc. groups — not user metadata.
         next false unless Display.embedded_key?(k)
 
@@ -104,8 +129,29 @@ module Metaclean
         # no "Group:" prefix means the whole key is the tag name.
         group, tag = k.to_s.split(':', 2)
         name = tag.nil? ? group.to_s : tag
+
+        # A zeroed/empty value is not a leak for un-removable container atoms like
+        # QuickTime:CreateDate (deletable only by zeroing, "0000:00:00 …") — without
+        # this every video would fail the gate on an already-zeroed date. GPS is the
+        # exception: 0,0 is a REAL location (Null Island) and a coordinate ExifTool
+        # reports as 0 (or null) must still be caught, so the blank exemption NEVER
+        # applies to GPS-family entries — the whole point of the fail-closed backstop.
+        gps = group.to_s.start_with?('GPS') || name.start_with?('GPS')
+        next false if !gps && blank_value?(v)
+
         privacy_group?(group) || privacy_tag?(name)
       end
+    end
+
+    # True when a value carries no information: empty, or only zeros plus date/time
+    # punctuation and the "Z" (UTC) marker — e.g. "0000:00:00 00:00:00", or the ASF
+    # variant "0000:00:00 00:00:00Z" that mat2 writes into WMV's mandatory date
+    # field. Only the digit 0 is stripped (never 1-9), so a real value like
+    # "59.9139", "Jane Doe", or a real "2024:..." date keeps other characters and
+    # is NOT blank. (GPS is exempt from this check entirely — see privacy_residual.)
+    def blank_value?(value)
+      s = value.to_s
+      s.strip.empty? || s.gsub(/[Z0\s:.+-]/, '').empty?
     end
 
     # A group is privacy-bearing if it matches one of the family prefixes

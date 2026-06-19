@@ -87,18 +87,67 @@ class StrategyTest < Minitest::Test
     assert_empty residual({})
   end
 
+  # A zeroed/empty value is not a leak — un-removable container atoms (e.g.
+  # QuickTime:CreateDate, which can only be zeroed) must not block an otherwise
+  # clean file, or no video could ever pass the clean gate.
+  def test_zeroed_or_blank_value_not_flagged
+    assert_empty residual('QuickTime:CreateDate' => '0000:00:00 00:00:00')
+    assert_empty residual('PDF:Author' => '')
+  end
+
+  # …but a REAL date/value under the same tag name IS still flagged.
+  def test_real_value_still_flagged
+    refute_empty residual('QuickTime:CreateDate' => '2026:01:01 12:00:00')
+    refute_empty residual('PDF:Author' => 'Jane Doe')
+  end
+
+  # A zeroed/null GPS coordinate is Null Island — a REAL location — so it must
+  # stay flagged even though it survives blank_value?. (Regression: the blank
+  # shortcut used to run BEFORE the GPS match and silently dropped it = a leak.)
+  def test_zeroed_or_null_gps_still_flagged
+    refute_empty residual('GPS:GPSLatitude' => 0)
+    refute_empty residual('GPS:GPSLongitude' => '0 0 0')
+    refute_empty residual('GPS:GPSLatitude' => nil)
+    refute_empty residual('XMP-exif:GPSAltitude' => 0)
+  end
+
+  # blank_value? boundary — pinned directly so a future regex tweak can't quietly
+  # widen "blank" and drop a real value past the backstop.
+  def test_blank_value_boundary
+    assert S.blank_value?('')
+    assert S.blank_value?(nil)
+    assert S.blank_value?('0000:00:00 00:00:00')
+    assert S.blank_value?('0000:00:00 00:00:00Z'), 'ASF (WMV) zeroed UTC date is blank'
+    assert S.blank_value?('0.0')
+    refute S.blank_value?('1')
+    refute S.blank_value?('N')
+    refute S.blank_value?('59.9139')
+    refute S.blank_value?('2024:01:01 12:00:00Z'), 'a REAL UTC date is not blank'
+    refute S.blank_value?('Zoe'), 'only the digit 0 and Z are stripped, not letters'
+  end
+
+  # WMV (ASF): mat2 strips Title/Author but writes a zeroed mandatory date
+  # "0000:00:00 00:00:00Z". That date must be treated as blank (not a leak), or
+  # every cleaned WMV would wrongly report :failed even though it is clean.
+  def test_zeroed_asf_creationdate_not_flagged
+    assert_empty residual('ASF:CreationDate' => '0000:00:00 00:00:00Z')
+    refute_empty residual('ASF:CreationDate' => '2024:01:01 12:00:00Z') # a real one is flagged
+  end
+
   # mat2_essential?
   def test_mat2_essential
     assert S.mat2_essential?('report.docx')
-    assert S.mat2_essential?('/x/y.PDF'), 'should be case-insensitive'
+    assert S.mat2_essential?('/x/y.ODT'), 'should be case-insensitive'
     refute S.mat2_essential?('photo.jpg')
+    refute S.mat2_essential?('doc.pdf'), 'PDF is handled by exiftool + qpdf, not mat2'
   end
 
   # tools_for: pipeline membership + ordering (binaries stubbed)
-  def test_pdf_uses_all_three_in_order
+  # PDF skips mat2 (it rasterizes) — exiftool strips metadata, qpdf rebuilds.
+  def test_pdf_uses_exiftool_and_qpdf_not_mat2
     Metaclean::Mat2.stub(:available?, true) do
       Metaclean::Qpdf.stub(:available?, true) do
-        assert_equal %i[mat2 exiftool qpdf], S.tools_for('a.pdf')
+        assert_equal %i[exiftool qpdf], S.tools_for('a.pdf')
       end
     end
   end
@@ -109,15 +158,46 @@ class StrategyTest < Minitest::Test
     end
   end
 
-  def test_jpeg_is_exiftool_then_mat2_when_supported
+  # Rasters mat2 would damage (recompress JPEG/WebP, downconvert TIFF) are
+  # ExifTool-ONLY — ExifTool strips them completely in place, so mat2 is skipped
+  # even when it "supports" the format.
+  def test_degraded_rasters_are_exiftool_only
     Metaclean::Mat2.stub(:supports?, true) do
-      assert_equal %i[exiftool mat2], S.tools_for('a.jpg')
+      %w[a.jpg a.jpeg a.webp a.tif a.tiff].each do |f|
+        assert_equal %i[exiftool], S.tools_for(f), f
+      end
     end
   end
 
-  def test_jpeg_is_exiftool_only_when_mat2_cannot_help
+  # Matroska (mkv/webm) can't be written by ExifTool (read-only) or mat2 (no
+  # parser), so ffmpeg is the ONLY tool routed for them.
+  def test_matroska_uses_ffmpeg_only
+    Metaclean::Ffmpeg.stub(:available?, true) do
+      assert_equal %i[ffmpeg], S.tools_for('a.mkv')
+      assert_equal %i[ffmpeg], S.tools_for('/x/y.WEBM'), 'should be case-insensitive'
+    end
+  end
+
+  # WMV (ASF) is the one container ExifTool can't write but mat2 CAN — so mat2
+  # MUST stay in the pipeline (it's the only tool that strips .wmv). Regression
+  # guard: dropping wmv from Mat2::SUPPORTED_EXTS makes every .wmv permanently
+  # :failed.
+  def test_wmv_keeps_mat2_in_pipeline
+    Metaclean::Mat2.stub(:available?, true) do
+      assert_includes S.tools_for('a.wmv'), :mat2
+    end
+  end
+
+  # A non-lossy else-branch format mat2 supports still gets exiftool → mat2.
+  def test_else_branch_adds_mat2_when_supported_and_lossless
+    Metaclean::Mat2.stub(:supports?, true) do
+      assert_equal %i[exiftool mat2], S.tools_for('a.mp3')
+    end
+  end
+
+  def test_else_branch_is_exiftool_only_when_mat2_cannot_help
     Metaclean::Mat2.stub(:supports?, false) do
-      assert_equal %i[exiftool], S.tools_for('a.jpg')
+      assert_equal %i[exiftool], S.tools_for('a.mp3')
     end
   end
 end

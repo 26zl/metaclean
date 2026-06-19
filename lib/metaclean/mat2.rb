@@ -18,10 +18,16 @@ module Metaclean
     # File extensions we know mat2 can handle. Keep this list conservative —
     # if mat2 doesn't actually support an extension, the call will fail
     # gracefully via UNSUPPORTED_RE below, but we'd rather not even try.
+    # Deliberately ABSENT: Matroska (mkv/webm) — mat2 has no parser for it; ffmpeg
+    # owns those (Strategy::FFMPEG_FORMATS). QuickTime/MP4-audio (mov/m4a) — mat2
+    # can't write them and ExifTool already cleans them, so listing them only
+    # caused a wasted mat2 spawn that always soft-skipped. WMV (ASF) IS here on
+    # purpose: mat2 CAN write it but ExifTool can't, so mat2 is the only tool that
+    # cleans .wmv — dropping it would make every .wmv permanently :failed.
     SUPPORTED_EXTS = %w[
       pdf png jpg jpeg tif tiff gif bmp svg webp
-      mp3 flac ogg opus wav m4a
-      mp4 avi mkv mov wmv webm
+      mp3 flac ogg opus wav
+      mp4 avi wmv
       docx xlsx pptx odt ods odp odg odf epub
       zip torrent
     ].freeze

@@ -50,4 +50,57 @@ class IntegrationTest < Minitest::Test
                    'no privacy tag survives a real end-to-end clean'
     end
   end
+
+  # The ffmpeg-owned Matroska path against the real binary: a tagged mkv comes out
+  # losslessly remuxed (in place) with no privacy residual. Guarded on the real
+  # tools so the pure suite — and a CI runner without ffmpeg — skip it.
+  def test_real_clean_strips_matroska_via_ffmpeg
+    skip 'ffmpeg/exiftool not installed' unless Metaclean::Ffmpeg.available? && Metaclean::Exiftool.available?
+
+    Dir.mktmpdir do |d|
+      f = File.join(d, 'clip.mkv')
+      ok = system('ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=d=1:s=64x64:r=5',
+                  '-metadata', 'title=Secret Title', '-metadata', 'artist=Jane', f, exception: false)
+      skip 'ffmpeg could not generate a sample mkv' unless ok && File.exist?(f)
+
+      assert Metaclean::Exiftool.read(f).values.any? { |v| v.to_s.include?('Secret Title') },
+             'precondition: the title metadata is present'
+
+      result = nil
+      capture_io { result = Metaclean::Runner.new(in_place: true).send(:clean_one, f, index: 1, total: 1) }
+      assert_equal :cleaned, result[:status], 'a real mkv clean via ffmpeg must succeed and be written'
+
+      after = Metaclean::Exiftool.read(f).values.map(&:to_s)
+      refute(after.any? { |v| v.include?('Secret Title') || v.include?('Jane') },
+             'no title/artist survives the ffmpeg remux')
+    end
+  end
+
+  # WMV (ASF) against the real binaries: ExifTool can't write it, mat2 strips
+  # Title/Author and writes a zeroed mandatory date "0000:00:00 00:00:00Z" that
+  # blank_value? must treat as non-residual — otherwise a genuinely clean WMV
+  # would wrongly report :failed. Guarded on mat2+exiftool+ffmpeg (to generate it).
+  def test_real_clean_strips_wmv_via_mat2
+    unless Metaclean::Mat2.available? && Metaclean::Exiftool.available? && Metaclean::Ffmpeg.available?
+      skip 'mat2/exiftool/ffmpeg not installed'
+    end
+
+    Dir.mktmpdir do |d|
+      f = File.join(d, 'clip.wmv')
+      ok = system('ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=d=1:s=64x64:r=5',
+                  '-c:v', 'wmv2', '-metadata', 'title=Secret WMV', '-metadata', 'author=Jane', f, exception: false)
+      skip 'ffmpeg could not generate a sample wmv' unless ok && File.exist?(f)
+
+      assert Metaclean::Exiftool.read(f).values.any? { |v| v.to_s.include?('Secret WMV') },
+             'precondition: the title metadata is present'
+
+      result = nil
+      capture_io { result = Metaclean::Runner.new(in_place: true).send(:clean_one, f, index: 1, total: 1) }
+      assert_equal :cleaned, result[:status], 'a real wmv clean via mat2 must succeed (zeroed ASF date is not a leak)'
+
+      after = Metaclean::Exiftool.read(f).values.map(&:to_s)
+      refute(after.any? { |v| v.include?('Secret WMV') || v.include?('Jane') },
+             'no title/author survives the mat2 strip')
+    end
+  end
 end

@@ -42,11 +42,11 @@ module Metaclean
     # shells/CI can act on:
     #   0  → success
     #   1  → general failure
-    #   2  → a required tool (exiftool/mat2/qpdf) is missing (install hint shown)
+    #   2  → a required tool (exiftool/mat2/qpdf/ffmpeg) is missing (install hint shown)
     #   130→ user pressed Ctrl-C (matches the standard SIGINT exit code)
     def run
       parse!
-      # Refuse to run unless all three external tools are present (see
+      # Refuse to run unless all four external tools are present (see
       # Metaclean.ensure_tools!). --help/--version already exited inside parse!,
       # so this only gates an actual inspect/clean.
       Metaclean.ensure_tools!
@@ -81,8 +81,8 @@ module Metaclean
         o.banner = 'Usage: metaclean [options] <path> [<path>...]'
         o.separator ''
         o.separator 'Metadata cleaner. Strips EXIF, IPTC, XMP, GPS,'
-        o.separator 'MakerNotes, ID3, document properties, etc. — uses ExifTool, mat2'
-        o.separator 'and qpdf together for maximum coverage.'
+        o.separator 'MakerNotes, ID3, document properties, etc. — uses ExifTool, mat2,'
+        o.separator 'qpdf and ffmpeg together for maximum coverage.'
         o.separator ''
 
         # Each `o.on` registers a flag. The block runs when that flag is seen.
@@ -103,9 +103,13 @@ module Metaclean
           puts "metaclean #{Metaclean::VERSION}"
           # Each `.version` returns the bare version number or nil when the
           # tool isn't installed; `|| 'not found'` handles the nil.
-          puts "  exiftool: #{Exiftool.version || 'not found'}"
-          puts "  mat2:     #{Mat2.version     || 'not found'}"
-          puts "  qpdf:     #{Qpdf.version     || 'not found'}"
+          # Route the tool versions (which come from the binaries' own stdout)
+          # through printable, like every other output path, so a tool emitting
+          # ANSI/OSC control bytes on its version line can't inject the terminal.
+          puts "  exiftool: #{Display.printable(Exiftool.version || 'not found')}"
+          puts "  mat2:     #{Display.printable(Mat2.version     || 'not found')}"
+          puts "  qpdf:     #{Display.printable(Qpdf.version     || 'not found')}"
+          puts "  ffmpeg:   #{Display.printable(Ffmpeg.version   || 'not found')}"
           exit
         end
       end
@@ -114,8 +118,11 @@ module Metaclean
       # positional args (file paths) are left behind.
       begin
         parser.parse!(@argv)
-      rescue OptionParser::InvalidOption, OptionParser::MissingArgument => e
-        # Bad flag → show the message + the help text and exit non-zero.
+      rescue OptionParser::ParseError => e
+        # Any malformed flag — unknown, missing argument, or an ambiguous
+        # abbreviation like `--i` (matches both --inspect and --in-place) —
+        # shows the message + help and exits non-zero, never a raw backtrace.
+        # ParseError is the base class of all of OptionParser's error types.
         warn Display.error(e.message)
         warn parser
         exit 1

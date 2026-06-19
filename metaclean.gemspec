@@ -5,10 +5,10 @@ require_relative 'lib/metaclean/version'
 Gem::Specification.new do |s|
   s.name        = 'metaclean'
   s.version     = Metaclean::VERSION
-  s.summary     = 'CLI that strips file metadata with ExifTool, mat2 and qpdf.'
+  s.summary     = 'CLI that strips file metadata with ExifTool, mat2, qpdf and ffmpeg.'
   s.description = <<~DESC
-    metaclean is a small Ruby CLI that wraps ExifTool, mat2 and qpdf to strip
-    removable embedded tags (EXIF, IPTC, XMP, GPS, MakerNotes, ID3, document
+    metaclean is a small Ruby CLI that wraps ExifTool, mat2, qpdf and ffmpeg to
+    strip removable embedded tags (EXIF, IPTC, XMP, GPS, MakerNotes, ID3, document
     properties, etc.) from images, audio, video, PDFs and Office documents —
     and shows a before/after diff of what was removed.
   DESC
@@ -31,4 +31,5 @@ Gem::Specification.new do |s|
   s.requirements << 'ExifTool (https://exiftool.org) on PATH — required'
   s.requirements << 'mat2 on PATH — required'
   s.requirements << 'qpdf on PATH — required'
+  s.requirements << 'ffmpeg on PATH — required'
 end

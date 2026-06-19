@@ -100,6 +100,7 @@ module Metaclean
       have << "exiftool #{Exiftool.version}" if Exiftool.available?
       have << "mat2 #{Mat2.version}"         if Mat2.available?
       have << "qpdf #{Qpdf.version}"         if Qpdf.available?
+      have << "ffmpeg #{Ffmpeg.version}"     if Ffmpeg.available?
       Display.info "Tools detected: #{have.join(', ')}"
       Display.info '(dry-run — no files will be modified)' if @options[:dry_run]
     end
@@ -136,11 +137,17 @@ module Metaclean
 
       tool_results = []
       begin
+        # TOCTOU guard: the path was a regular file at discovery (expand_files), but
+        # it could have been swapped for a symlink in the window since. Re-check
+        # right before we read/copy/back it up, so we never copy — or take a .bak —
+        # THROUGH a link pointing outside the intended scope. Bails to :failed.
+        raise Error, "#{file} became a symlink since discovery — refusing to clean it" if File.symlink?(file)
+
         # The staging copy lives INSIDE the begin so the ensure below cleans up a
         # partial temp if cp is interrupted (Ctrl-C) or fails mid-copy (disk full,
         # read-only fs). cp only ever reads the original, so the source is intact
         # regardless.
-        FileUtils.cp(file, staging)
+        copy_file_exclusive(file, staging)
         tools.each do |tool|
           tool_results << run_tool(tool, staging)
         end
@@ -184,8 +191,14 @@ module Metaclean
         # could widen a locked-down 0600 file to 0644 — a leak for a privacy tool.
         File.chmod(File.stat(file).mode, staging)
 
-        # Commit: rename staging → final_path (backing up the original in place).
-        commit!(staging, final_path)
+        # In-place clean of a hard-linked file only re-points THIS name (rename) at
+        # the freshly-cleaned inode; the file's other names still point at the
+        # original, metadata-bearing inode. This name is genuinely clean, but warn
+        # so the user knows the other links aren't covered by the run.
+        warn_if_hardlinked(file) if @options[:in_place]
+
+        # Commit: move/link staging → final_path (backing up the original in place).
+        final_path = commit!(staging, final_path)
         result = finalize_result(tool_results, before, after, residual, file: file)
         if result[:status] == :unverified
           reason = tool_errored?(tool_results) ? 'a tool in the pipeline failed' : 'mat2 did not run on this format'
@@ -203,6 +216,16 @@ module Metaclean
       end
     end
 
+    # Warn when an in-place target has more than one hard link: a rename only
+    # cleans the named link, leaving the others pointing at the original metadata.
+    def warn_if_hardlinked(file)
+      nlink = File.stat(file).nlink
+      return unless nlink > 1
+
+      Display.warning "#{file} has #{nlink} hard links — only this name is cleaned; " \
+                      "the other #{nlink - 1} still contain the original metadata."
+    end
+
     # Dispatches to the right wrapper module. Returns a small Hash so the
     # caller can summarize tool-by-tool success/failure.
     def run_tool(tool, path)
@@ -210,7 +233,9 @@ module Metaclean
       when :exiftool
         # :unsupported means ExifTool can read but not write this format (a
         # ZIP-based document mat2 owns) — a soft skip, NOT a pipeline failure.
-        if Exiftool.strip!(path) == :unsupported
+        # Pass the privacy tag names so TIFF/DNG IFD0 tags `-all=` won't drop
+        # still get deleted (losslessly).
+        if Exiftool.strip!(path, also_delete: Strategy::PRIVACY_TAGS) == :unsupported
           Display.info '  · exiftool (read-only for this format, skipped)'
           { tool: :exiftool, ok: false, skipped: true, note: :unsupported }
         else
@@ -238,6 +263,11 @@ module Metaclean
         Qpdf.rebuild!(path)
         Display.info '  ✓ qpdf'
         { tool: :qpdf, ok: true }
+      when :ffmpeg
+        # Matroska remux. A failure raises and is caught below (→ not written).
+        Ffmpeg.strip!(path)
+        Display.info '  ✓ ffmpeg'
+        { tool: :ffmpeg, ok: true }
       end
     rescue Error, SystemCallError => e
       # One tool failing shouldn't abort the pipeline — we want to keep
@@ -246,7 +276,11 @@ module Metaclean
       # (Errno::*) covers a tool wrapper's internal FileUtils.mv/File.delete
       # raising on permission/quota/disk errors — without it those would
       # escape and crash the batch.
-      Display.warning "  ✗ #{tool}: #{e.message} — continuing"
+      # Collapse whitespace and bound the length: some tools (notably mat2) dump a
+      # multi-line Python traceback on failure, which would otherwise flood the
+      # diff. One readable line is enough — re-run the tool directly to debug.
+      msg = Display.truncate(e.message.gsub(/\s+/, ' ').strip, 200)
+      Display.warning "  ✗ #{tool}: #{msg} — continuing"
       { tool: tool, ok: false, error: e.message }
     end
 
@@ -315,21 +349,93 @@ module Metaclean
     # Path helpers — figuring out where to stage and where to commit.
 
     def commit!(staging, final_path)
+      committed = false
       # Make a backup of the original BEFORE we overwrite it. The order matters:
       # if the rename below fails, the backup still exists.
       if @options[:in_place]
-        backup = collision_safe("#{final_path}.bak")
-        # preserve: true so the .bak keeps the original's mode (a 0600 file's
-        # backup must not be created world-readable).
-        FileUtils.cp(final_path, backup, preserve: true)
+        backup = copy_with_collision_safe_name(final_path, "#{final_path}.bak")
+        # File.rename, NOT FileUtils.mv. staging is in the same dir as final_path
+        # (staging_path_for), so this is always an atomic same-fs swap. FileUtils.mv
+        # would, on EPERM (e.g. a sticky /tmp file not owned by us) or EXDEV, fall
+        # back to a TRUNCATING copy of the original — and an interrupt mid-copy
+        # would corrupt the original while the rescue below deleted the only backup.
+        # File.rename raises BEFORE touching final_path, so the rescue's
+        # "staging still exists ⇒ original intact" assumption always holds.
+        File.rename(staging, final_path)
+        committed = true
+        return final_path
       end
-      FileUtils.mv(staging, final_path)
-    rescue SystemCallError
-      # The rename failed after the backup was already written (disk full,
-      # read-only fs, cross-device). The original is untouched, so the .bak is a
-      # redundant copy — remove it instead of leaving a stray file behind, then
-      # let the batch rescue report this file as failed.
-      File.delete(backup) if backup && File.exist?(backup)
+
+      link_with_collision_safe_name(staging, final_path)
+    rescue SystemCallError, Interrupt
+      # The rename failed (disk full, read-only fs, cross-device) OR the user hit
+      # Ctrl-C in the window after the .bak was written but before the mv. Either
+      # way the original is untouched, so the .bak is a redundant copy of it —
+      # remove it instead of leaving a stray file behind, then re-raise (a
+      # SystemCallError is reported per-file as failed; an Interrupt propagates to
+      # the CLI's exit-130 handler).
+      File.delete(backup) if backup && !committed && File.exist?(staging) && File.exist?(backup)
+      raise
+    end
+
+    def link_with_collision_safe_name(staging, preferred)
+      target = preferred
+      loop do
+        File.link(staging, target)
+        File.delete(staging)
+        return target
+      rescue Errno::EEXIST
+        target = collision_safe(target)
+      rescue Errno::EACCES, Errno::EPERM, Errno::ENOTSUP, NotImplementedError
+        # The filesystem can't hard-link (Linux returns EPERM; macOS/BSD on
+        # exFAT/FAT/SMB returns ENOTSUP/EOPNOTSUPP — same Errno class). Fall back
+        # to a plain exclusive copy so removable/network drives still clean.
+        target = copy_with_collision_safe_name(staging, target)
+        File.delete(staging)
+        return target
+      end
+    end
+
+    def copy_with_collision_safe_name(src, preferred)
+      target = preferred
+      loop do
+        copy_file_exclusive(src, target, preserve: true)
+        return target
+      rescue Errno::EEXIST
+        target = collision_safe(target)
+      end
+    end
+
+    def copy_file_exclusive(src, dest, preserve: false)
+      src_stat = File.lstat(src)
+      raise Error, "#{src} is a symlink — refusing to copy it" if src_stat.symlink?
+
+      mode = src_stat.mode & 0o7777
+      created = false
+      File.open(dest, File::WRONLY | File::CREAT | File::EXCL, mode) do |out|
+        created = true
+        File.open(src, 'rb') do |input|
+          opened = input.stat
+          unless opened.dev == src_stat.dev && opened.ino == src_stat.ino
+            raise Error, "#{src} changed while opening — refusing to copy it"
+          end
+
+          IO.copy_stream(input, out)
+        end
+      end
+      return unless preserve
+
+      # Best-effort: the bytes are already fully copied, so a failed mode/timestamp
+      # restore (e.g. utime/chmod on a FAT/exFAT mount) must NOT discard an
+      # otherwise-complete file by falling into the delete-on-error rescue below.
+      begin
+        File.chmod(mode, dest)
+        File.utime(src_stat.atime, src_stat.mtime, dest)
+      rescue SystemCallError
+        nil
+      end
+    rescue StandardError, Interrupt
+      File.delete(dest) if created && dest && File.exist?(dest)
       raise
     end
 
@@ -353,12 +459,12 @@ module Metaclean
     # The original extension is preserved as the LAST segment so tools like
     # mat2 — which dispatch on file extension — see the real type.
     def staging_path_for(final_path)
-      ext  = File.extname(final_path)
-      base = ext.empty? ? final_path : final_path[0...-ext.length]
+      dir = File.dirname(final_path)
+      ext = File.extname(final_path)
       # SecureRandom (not rand) makes the staging name unpredictable, so a
       # hostile process in the same directory can't pre-create it as a symlink
       # that `FileUtils.cp` would copy the (still-sensitive) original through.
-      "#{base}.metaclean.tmp.#{Process.pid}.#{SecureRandom.hex(8)}#{ext}"
+      File.join(dir, ".metaclean.tmp.#{Process.pid}.#{SecureRandom.hex(8)}#{ext}")
     end
 
     # If `path` is taken, return `path_1`, `path_2`, … until we find a free

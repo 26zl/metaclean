@@ -51,20 +51,17 @@ module Metaclean
       raise Error, 'qpdf not available' unless available?
 
       src = Metaclean.safe_path(path)
-      # SecureRandom (not PID alone) makes the temp name unpredictable, so a
-      # hostile process sharing the directory can't pre-create the path as a
-      # symlink that qpdf would then write through.
-      tmp = "#{src}.qpdf.tmp.#{SecureRandom.hex(8)}"
+      tmp = tmp_path_for(path)
 
       _out, err, status = Open3.capture3(
         'qpdf', '--linearize', '--object-streams=generate',
-        '--remove-unreferenced-resources=yes', src, tmp
+        '--remove-unreferenced-resources=yes', src, Metaclean.safe_path(tmp)
       )
 
       # qpdf has a quirk: exit code 3 means "succeeded with warnings" (output
       # is still produced and valid). We treat that the same as success.
       success = status.success? || status.exitstatus == 3
-      raise Error, "qpdf failed: #{err.strip}" unless success
+      raise Error, "qpdf failed: #{err.strip}" unless success && File.exist?(tmp)
 
       FileUtils.mv(tmp, src)
       true
@@ -72,6 +69,12 @@ module Metaclean
       # Interrupt-safety: drop the temp if we died (or failed) before the
       # rename. On success it's already moved, so this is a no-op.
       File.delete(tmp) if tmp && File.exist?(tmp)
+    end
+
+    # Short sibling temp in the same directory: same-fs rename, unpredictable
+    # name, and no risk of exceeding filename length by appending to a long PDF.
+    def tmp_path_for(path)
+      File.join(File.dirname(path), ".metaclean.qpdf.tmp.#{Process.pid}.#{SecureRandom.hex(8)}.pdf")
     end
   end
 end

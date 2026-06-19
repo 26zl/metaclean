@@ -18,7 +18,7 @@ Please include:
 
 - the file type and a minimal way to reproduce (use `--dry-run` if you can't
   share the file);
-- the metaclean version and the detected exiftool/mat2/qpdf versions
+- the metaclean version and the detected exiftool/mat2/qpdf/ffmpeg versions
   (`metaclean --version`);
 - your OS and Ruby version.
 
@@ -26,9 +26,9 @@ We aim to acknowledge reports within a few days.
 
 ## Scope
 
-metaclean shells out to **ExifTool**, **mat2**, and **qpdf**, which parse hostile
-binary formats and have had CVEs of their own. Vulnerabilities in those tools
-should be reported to their respective projects — keep them updated. metaclean's
+metaclean shells out to **ExifTool**, **mat2**, **qpdf**, and **ffmpeg**, which
+parse hostile binary formats and have had CVEs of their own. Vulnerabilities in
+those tools should be reported to their respective projects — keep them updated. metaclean's
 own scope is the wrapper logic: path handling and argument-injection guards, the
 strip/verify pipeline, the "never write a file we can't verify is clean"
 guarantee, and the atomic in-place write/backup.

@@ -39,11 +39,11 @@ jobs:
       # missing tool), so a hiccup in a third-party formula doesn't fail the run.
       - name: Install metadata tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg
       - name: Install metadata tools (macOS)
         if: runner.os == 'macOS'
         continue-on-error: true
-        run: brew install exiftool qpdf mat2
+        run: brew install exiftool qpdf mat2 ffmpeg
       - run: bundle exec rake test
 
   lint:
@@ -56,3 +56,30 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
       - run: bundle exec rubocop
+
+  # Opt-in "every format" matrix: generates a real sample of every format
+  # metaclean routes (images/audio/video/pdf/archives/office), cleans it, and
+  # asserts no false-clean + lossless content. Separate from the fast unit job
+  # because it also needs the file GENERATORS (ImageMagick, ghostscript,
+  # LibreOffice) and is slower. The matrix test skips unless METACLEAN_FORMAT_MATRIX
+  # is set, so it only runs here.
+  format-matrix:
+    name: Format matrix (real clean of every format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Install cleaning tools + format generators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg \
+            imagemagick ghostscript libreoffice-writer libreoffice-calc zip unzip
+      # ImageMagick disables the PDF coder by default on CI for security; the
+      # matrix's PDF case uses ghostscript instead, so this is only a safety net.
+      - name: Run the format matrix
+        env:
+          METACLEAN_FORMAT_MATRIX: '1'
+        run: bundle exec ruby -Itest test/test_format_matrix.rb
