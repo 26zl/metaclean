@@ -29,7 +29,7 @@ Gem::Specification.new do |s|
   }
 
   s.requirements << 'ExifTool (https://exiftool.org) on PATH — required'
-  s.requirements << 'mat2 on PATH — required'
-  s.requirements << 'qpdf on PATH — required'
-  s.requirements << 'ffmpeg on PATH — required'
+  s.requirements << 'mat2 (https://github.com/jvoisin/mat2) on PATH — required'
+  s.requirements << 'qpdf (https://qpdf.sourceforge.io) on PATH — required'
+  s.requirements << 'ffmpeg (https://ffmpeg.org) on PATH — required'
 end
