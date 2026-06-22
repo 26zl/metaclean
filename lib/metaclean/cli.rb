@@ -1,33 +1,17 @@
 # frozen_string_literal: true
 
-# Command-line argument parser.
-#
-# We use Ruby's standard library `OptionParser` instead of a gem like Thor
-# because it has zero dependencies and is plenty for our needs. The pattern is:
-#
-#   1. Define each flag inside an `OptionParser.new do |o| ... end` block.
-#   2. `o.on(...)` takes the flag spec and a block that runs when the flag
-#      is seen. The block usually mutates `@options` to record the choice.
-#   3. `parser.parse!(@argv)` consumes flags from `@argv` and leaves
-#      positional args (the file paths) behind.
+# CLI argument parser. Uses stdlib OptionParser (zero deps) over a gem like Thor.
 
 require 'optparse'
 
 module Metaclean
   class CLI
-    # Class-level convenience: `Metaclean::CLI.start(ARGV)` reads cleaner
-    # than `Metaclean::CLI.new(ARGV).run`.
     def self.start(argv)
       new(argv).run
     end
 
     def initialize(argv)
-      # `dup` makes a shallow copy so we can mutate `@argv` without
-      # surprising the caller (ARGV itself stays intact).
       @argv = argv.dup
-
-      # All options default to safe/off values. `parse!` flips them
-      # selectively as it sees flags.
       @options = {
         recursive:    false,
         in_place:     false,
@@ -67,8 +51,7 @@ module Metaclean
       warn Display.error(e.message)
       exit 1
     rescue Interrupt
-      # Pressing Ctrl-C raises `Interrupt`. Catching it lets us print a
-      # clean message instead of a Ruby stack trace.
+      # Print a clean message instead of a stack trace.
       warn "\n#{Display.error('Interrupted.')}"
       exit 130
     end
@@ -77,7 +60,6 @@ module Metaclean
 
     def parse!
       parser = OptionParser.new do |o|
-        # The banner shows up at the top of `--help`.
         o.banner = 'Usage: metaclean [options] <path> [<path>...]'
         o.separator ''
         o.separator 'Metadata cleaner. Strips EXIF, IPTC, XMP, GPS,'
@@ -85,7 +67,6 @@ module Metaclean
         o.separator 'qpdf and ffmpeg together for maximum coverage.'
         o.separator ''
 
-        # Each `o.on` registers a flag. The block runs when that flag is seen.
         o.separator 'Modes:'
         o.on('--inspect', 'Only show metadata, do not modify files')     { @options[:inspect_only] = true }
         o.on('--dry-run', 'Simulate cleaning, show diff, write nothing') { @options[:dry_run] = true }
@@ -101,11 +82,9 @@ module Metaclean
         o.on('-h', '--help')    { puts o; exit }
         o.on('-v', '--version') do
           puts "metaclean #{Metaclean::VERSION}"
-          # Each `.version` returns the bare version number or nil when the
-          # tool isn't installed; `|| 'not found'` handles the nil.
-          # Route the tool versions (which come from the binaries' own stdout)
-          # through printable, like every other output path, so a tool emitting
-          # ANSI/OSC control bytes on its version line can't inject the terminal.
+          # Route tool versions (from the binaries' own stdout) through printable,
+          # like every other output path, so a tool emitting ANSI/OSC control
+          # bytes on its version line can't inject the terminal.
           puts "  exiftool: #{Display.printable(Exiftool.version || 'not found')}"
           puts "  mat2:     #{Display.printable(Mat2.version     || 'not found')}"
           puts "  qpdf:     #{Display.printable(Qpdf.version     || 'not found')}"
@@ -114,8 +93,6 @@ module Metaclean
         end
       end
 
-      # `parse!` mutates @argv in place: known flags are consumed,
-      # positional args (file paths) are left behind.
       begin
         parser.parse!(@argv)
       rescue OptionParser::ParseError => e
@@ -128,8 +105,7 @@ module Metaclean
         exit 1
       end
 
-      # No paths after flags → user probably ran `metaclean` with no args.
-      # Show help and exit non-zero so scripts notice.
+      # No paths: show help, exit non-zero so scripts notice.
       if @argv.empty?
         puts parser
         exit 1

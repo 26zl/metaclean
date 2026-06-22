@@ -1,36 +1,23 @@
 # frozen_string_literal: true
 
-# A thin Ruby wrapper around the external `exiftool` binary.
+# Thin wrapper around the external `exiftool` binary.
 #
-# We use `Open3.capture3` instead of backticks or `system()` because:
-#   1. It returns stdout, stderr, and the process status separately.
-#   2. When called with multiple arguments, it bypasses the SHELL entirely
-#      — so a filename like `cat; rm -rf /` is treated as ONE argument, not
-#      a shell command. This is the standard way to safely shell out in Ruby.
-#
-# Bypassing the shell is NOT the whole story: exiftool still parses its own
-# arguments, so a filename that begins with "-" (e.g. `-config`) would be read
-# as an option. We route every path through `Metaclean.safe_path` so a leading
-# dash becomes "./-…" and is always seen as a filename.
+# Open3.capture3 with multiple args bypasses the shell, so a filename like
+# `cat; rm -rf /` is one argument, not a command. That's not the whole story:
+# exiftool still parses its own arguments, so a filename beginning with "-"
+# (e.g. `-config`) would be read as an option. Every path goes through
+# `Metaclean.safe_path`, which prefixes a leading dash with "./" so it's
+# always seen as a filename.
 
 require 'open3'
 require 'json'
 
 module Metaclean
-  # `module Exiftool` (vs `class`) because we want module-level methods like
-  # `Exiftool.read(path)` — there's no state to carry per instance.
   module Exiftool
-    # `module_function` makes every method below act like a "static" method
-    # on the module *and* a private instance method (rarely used). It saves
-    # writing `def self.read` for every method.
     module_function
 
-    # Returns true if `exiftool` is on PATH. The result is memoized in `@available`
-    # so repeated checks don't re-spawn the process.
-    #
-    # `defined?(@available)` is safer than `@available.nil?` because the
-    # cached value could legitimately be `false` — we want to skip the
-    # re-check in that case too.
+    # True if `exiftool` is on PATH. Memoized so repeated checks don't re-spawn
+    # it (defined? not nil? — the cached value can legitimately be false).
     def available?
       return @available if defined?(@available)
 
@@ -40,10 +27,8 @@ module Metaclean
       @version = @available ? out.strip : nil
       @available
     rescue Errno::ENOENT
-      # `Errno::ENOENT` ("no such file or directory") is what Open3 raises
-      # when the executable can't be found. We treat that as "not available".
       @version = nil
-      @available = false
+      @available = false # exiftool not on PATH
     end
 
     # Returns the version string, or nil if exiftool is missing/broken.
@@ -113,10 +98,9 @@ module Metaclean
     # Removes every removable tag, in place. Returns true on success,
     # :unsupported when ExifTool cannot write the format, and raises on failure.
     #
-    # `-all=` is the magic incantation: it sets every tag to nothing (= empty),
-    # which deletes them. `-overwrite_original` makes ExifTool replace the file
-    # directly instead of writing `file_original` next to it. `-api
-    # largefilesupport=1` lets files larger than 4 GB through.
+    # `-all=` sets every tag to empty, which deletes them. `-overwrite_original`
+    # makes ExifTool replace the file directly instead of writing `file_original`
+    # next to it. `-api largefilesupport=1` lets files larger than 4 GB through.
     def strip!(path, also_delete: [])
       # `-all=` clears metadata, but for TIFF/DNG ExifTool refuses to delete the
       # IFD0 directory and leaves its tags (Artist, Software, …) behind. So we

@@ -1,14 +1,7 @@
 # frozen_string_literal: true
 
-# Anything that prints to the terminal lives here: ANSI colors, headers,
-# tables, the before/after diff. Keeping presentation in one module means
-# the rest of the codebase stays focused on logic.
-#
-# ANSI escape sequences:
-#   "\e[31m" turns the terminal text red.
-#   "\e[0m"  resets all styling.
-# A modern terminal interprets these; if you redirect to a file, they show
-# up as garbage — that's why we check `tty?` before emitting them.
+# All terminal output lives here: ANSI colors, headers, tables, the
+# before/after diff. Colors are gated on `tty?` (see color?).
 
 module Metaclean
   module Display
@@ -46,9 +39,7 @@ module Metaclean
       @color
     end
 
-    # `c` for "color". Wraps text in the requested color, or returns it
-    # plain if colors are disabled. The reset code at the end stops the
-    # color from bleeding into following output.
+    # Wrap text in a color, or pass it through plain when colors are off.
     def c(text, color)
       text = printable(text)
       return text unless color?
@@ -56,8 +47,6 @@ module Metaclean
       "#{COLORS[color]}#{text}#{COLORS[:reset]}"
     end
 
-    # Visual section markers used throughout the runner's output. Keeping
-    # them here means a single change updates the look everywhere.
     def header(text)
       puts
       puts c('━' * 64, :gray)
@@ -85,16 +74,12 @@ module Metaclean
         return
       end
 
-      # `group_by` partitions an Enumerable into a Hash keyed by the block's
-      # result. Here we group all "GPS:*" tags together, all "EXIF:*" together,
-      # etc., then print each group as a labeled sub-table.
+      # Group "GPS:*", "EXIF:*", … each into its own labeled sub-table.
       grouped = rows.group_by { |k, _| group_of(k) }
       grouped.sort_by { |g, _| g.to_s }.each do |group, pairs|
         puts c("  [#{group}]", :magenta)
         pairs.sort_by { |k, _| k.to_s }.each do |k, v|
           tag = k.to_s.split(':', 2).last
-          # `format` (alias of sprintf) does column alignment: %-38s = left-
-          # aligned, padded to 38 chars.
           line = format('    %-38s %s', truncate(tag, 38), truncate(format_value(v), 60))
           puts c(line, :dim)
         end
@@ -111,8 +96,6 @@ module Metaclean
       changed = []
       kept    = []
 
-      # Classifying each key into one of three buckets keeps the rest of
-      # the method simple and testable.
       keys.sort.each do |k|
         b = before[k]
         a = after[k]
@@ -155,8 +138,7 @@ module Metaclean
       end
     end
 
-    # Pull the group name out of "Group:Tag". The `2` argument to split caps
-    # the result at 2 elements, so a value containing ":" doesn't break it.
+    # Group name out of "Group:Tag" (split caps at 2 so a ":" in the value is safe).
     def group_of(key)
       key.to_s.split(':', 2).first.to_s
     end

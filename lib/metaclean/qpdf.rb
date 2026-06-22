@@ -2,11 +2,10 @@
 
 # Wrapper around `qpdf` — a PDF structural cleaner.
 #
-# Why qpdf in addition to mat2/ExifTool? PDFs can carry metadata in places
-# those two don't always reach: orphaned objects, unused image streams,
-# old revisions kept in the file. qpdf rebuilds the PDF from scratch using
-# only the objects actually referenced by the document. That's a great
-# final pass after the other tools have stripped the obvious metadata.
+# Why qpdf on top of mat2/ExifTool? PDFs hide metadata in places those two
+# don't always reach: orphaned objects, unused image streams, old revisions.
+# qpdf rebuilds the PDF using only referenced objects — a final pass after the
+# other tools have stripped the obvious metadata.
 
 require 'open3'
 require 'fileutils'

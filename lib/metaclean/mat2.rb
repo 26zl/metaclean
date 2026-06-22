@@ -32,9 +32,8 @@ module Metaclean
       zip torrent
     ].freeze
 
-    # Regex matching the messages mat2 prints when it can't handle a file.
-    # We use this to distinguish "soft skip" from a real error.
-    # `i` flag = case-insensitive.
+    # Matches the messages mat2 prints when it can't handle a file — lets us
+    # distinguish a soft skip from a real error.
     UNSUPPORTED_RE = /(not supported|isn't supported|cannot be cleaned|unsupported file)/i.freeze
 
     module_function

@@ -15,7 +15,6 @@ require 'securerandom'
 
 module Metaclean
   class Runner
-    # Constructor — just stashes the options Hash. The CLI builds it.
     def initialize(options)
       @options = options
     end
@@ -59,28 +58,23 @@ module Metaclean
           puts Display.c('Backups will be saved alongside as <file>.bak.', :gray)
         end
         print Display.c('Proceed? [y/N] ', :bold)
-        # `&.` is the safe-navigation operator: if `gets` returns nil
-        # (e.g. user hit Ctrl-D), the chain short-circuits to nil.
-        ans = $stdin.gets&.strip&.downcase
+        ans = $stdin.gets&.strip&.downcase # gets → nil on Ctrl-D
         return Display.warning('Aborted.') unless %w[y yes].include?(ans)
       end
 
       summary = { cleaned: 0, unverified: 0, failed: 0, removed_total: 0, residual_files: 0 }
 
-      # `each_with_index` gives us the file AND its position. We pass both
-      # to `clean_one` so it can render "[3/47]" in batch mode.
+      # index/total let clean_one render "[3/47]" in batch mode.
       files.each_with_index do |file, idx|
         result = clean_one(file, index: idx + 1, total: files.size)
         summary[result[:status]] += 1
         summary[:removed_total]  += result[:removed].to_i
         summary[:residual_files] += 1 if result[:residual].to_i.positive?
       rescue Error, SystemCallError => e
-        # Block-level rescue (Ruby 2.5+). Catches errors from `clean_one`
-        # without aborting the whole batch — one bad file shouldn't stop
-        # the next 99 from being cleaned. `SystemCallError` (Errno::*: disk
-        # full, permission denied, read-only fs) is a SIBLING of our `Error`,
-        # not a subclass, so it must be named explicitly or it would escape
-        # this rescue and crash the run with a raw backtrace.
+        # One bad file shouldn't abort the whole batch. SystemCallError
+        # (Errno::*: disk full, permission denied, read-only fs) is a SIBLING
+        # of our Error, not a subclass, so it must be named explicitly or it
+        # would escape this rescue and crash the run with a raw backtrace.
         warn Display.error("#{file}: #{e.message}")
         summary[:failed] += 1
       end
@@ -105,8 +99,7 @@ module Metaclean
       Display.info '(dry-run — no files will be modified)' if @options[:dry_run]
     end
 
-    # Cleaning a single file — the heart of the program.
-
+    # Cleaning a single file.
     def clean_one(file, index:, total:)
       prefix = total > 1 ? "[#{index}/#{total}] " : ''
       Display.header "#{prefix}📄 #{file}"
@@ -467,8 +460,7 @@ module Metaclean
       File.join(dir, ".metaclean.tmp.#{Process.pid}.#{SecureRandom.hex(8)}#{ext}")
     end
 
-    # If `path` is taken, return `path_1`, `path_2`, … until we find a free
-    # one. `loop do … end` runs forever; we `return` out of it.
+    # If `path` is taken, try `path_1`, `path_2`, … until one is free.
     def collision_safe(path)
       return path unless File.exist?(path)
 

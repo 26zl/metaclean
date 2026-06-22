@@ -102,7 +102,7 @@ module Metaclean
         tools << :mat2
         tools << :exiftool
       else
-        # Everything else (JPEG, MP3, RAW, …) — ExifTool is the gold standard.
+        # Everything else (JPEG, MP3, RAW, …) — ExifTool has the broadest coverage.
         # mat2 still adds coverage for many, but NOT for rasters it would damage
         # (MAT2_DEGRADES) — there ExifTool's in-place strip is complete and lossless.
         tools << :exiftool
