@@ -1,5 +1,15 @@
 # metaclean
 
+```
+███╗   ███╗███████╗████████╗ █████╗  ██████╗██╗     ███████╗ █████╗ ███╗   ██╗
+████╗ ████║██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║     ██╔════╝██╔══██╗████╗  ██║
+██╔████╔██║█████╗     ██║   ███████║██║     ██║     █████╗  ███████║██╔██╗ ██║
+██║╚██╔╝██║██╔══╝     ██║   ██╔══██║██║     ██║     ██╔══╝  ██╔══██║██║╚██╗██║
+██║ ╚═╝ ██║███████╗   ██║   ██║  ██║╚██████╗███████╗███████╗██║  ██║██║ ╚████║
+╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝
+  strip EXIF · IPTC · XMP · GPS · ID3 — leave the file clean
+```
+
 [![CI](https://img.shields.io/github/actions/workflow/status/26zl/metaclean/ci.yml?branch=main&label=CI)](https://github.com/26zl/metaclean/actions/workflows/ci.yml)
 [![Gem](https://img.shields.io/gem/v/metaclean)](https://rubygems.org/gems/metaclean)
 [![Ruby](https://img.shields.io/badge/ruby-%E2%89%A5%203.2-CC342D)](https://www.ruby-lang.org)

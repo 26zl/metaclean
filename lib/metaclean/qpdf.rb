@@ -73,7 +73,7 @@ module Metaclean
     # Short sibling temp in the same directory: same-fs rename, unpredictable
     # name, and no risk of exceeding filename length by appending to a long PDF.
     def tmp_path_for(path)
-      File.join(File.dirname(path), ".metaclean.qpdf.tmp.#{Process.pid}.#{SecureRandom.hex(8)}.pdf")
+      File.join(File.dirname(path), "#{Metaclean::TMP_MARKER}qpdf.#{Process.pid}.#{SecureRandom.hex(8)}.pdf")
     end
   end
 end

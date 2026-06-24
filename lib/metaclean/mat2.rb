@@ -63,7 +63,7 @@ module Metaclean
     def supports?(path)
       return false unless available?
 
-      SUPPORTED_EXTS.include?(File.extname(path).downcase.delete('.'))
+      SUPPORTED_EXTS.include?(Metaclean.ext_of(path))
     end
 
     # Strips metadata from `path` in place. Returns:

@@ -66,6 +66,20 @@ class RunnerTest < Minitest::Test
     end
   end
 
+  # Every staging-temp producer must embed the shared marker so Runner#skip?
+  # ignores a leftover temp from an interrupted run. Regression: qpdf used to
+  # emit a divergent ".metaclean.qpdf.tmp." that did NOT contain TMP_MARKER.
+  def test_all_temp_producers_embed_shared_marker
+    {
+      runner: @r.send(:staging_path_for, 'a/b/x.jpg'),
+      ffmpeg: Metaclean::Ffmpeg.send(:tmp_path_for, 'a/b/x.mkv'),
+      qpdf:   Metaclean::Qpdf.send(:tmp_path_for, 'a/b/x.pdf')
+    }.each do |tool, tmp|
+      assert_includes File.basename(tmp), Metaclean::TMP_MARKER,
+                      "#{tool} temp #{tmp} must contain TMP_MARKER"
+    end
+  end
+
   # path helpers
   def test_build_clean_path
     assert_equal 'a/b/photo_clean.jpg', @r.send(:build_clean_path, 'a/b/photo.jpg')

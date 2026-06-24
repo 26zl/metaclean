@@ -443,7 +443,7 @@ module Metaclean
     def build_clean_path(file)
       ext  = File.extname(file)
       base = File.basename(file, ext)
-      File.join(File.dirname(file), "#{base}_clean#{ext}")
+      File.join(File.dirname(file), "#{base}#{Metaclean::CLEAN_SUFFIX}#{ext}")
     end
 
     # Staging path lives in the same directory as the destination so that
@@ -457,7 +457,7 @@ module Metaclean
       # SecureRandom (not rand) makes the staging name unpredictable, so a
       # hostile process in the same directory can't pre-create it as a symlink
       # that `FileUtils.cp` would copy the (still-sensitive) original through.
-      File.join(dir, ".metaclean.tmp.#{Process.pid}.#{SecureRandom.hex(8)}#{ext}")
+      File.join(dir, "#{Metaclean::TMP_MARKER}#{Process.pid}.#{SecureRandom.hex(8)}#{ext}")
     end
 
     # If `path` is taken, try `path_1`, `path_2`, … until one is free.
@@ -590,9 +590,9 @@ module Metaclean
       base = File.basename(file)
       return true if base.start_with?('.')
       return true if base.end_with?('.bak')
-      return true if base =~ /_clean(_\d+)?\.[^.]+\z/
+      return true if base =~ Metaclean::CLEAN_OUTPUT_RE
       # Matches our staging temps regardless of the pid/random suffix format.
-      return true if base.include?('.metaclean.tmp.')
+      return true if base.include?(Metaclean::TMP_MARKER)
 
       false
     end

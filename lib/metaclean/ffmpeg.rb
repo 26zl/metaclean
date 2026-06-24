@@ -74,7 +74,7 @@ module Metaclean
     def tmp_path_for(path)
       dir  = File.dirname(path)
       ext  = File.extname(path)
-      File.join(dir, ".metaclean.tmp.ff.#{Process.pid}.#{SecureRandom.hex(8)}#{ext}")
+      File.join(dir, "#{Metaclean::TMP_MARKER}ff.#{Process.pid}.#{SecureRandom.hex(8)}#{ext}")
     end
 
     def file_url(path)

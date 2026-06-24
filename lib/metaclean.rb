@@ -31,6 +31,31 @@ module Metaclean
     s.start_with?('-') ? File.join('.', s) : s
   end
 
+  # Lower-cased, dot-stripped extension used for FORMAT ROUTING decisions
+  # (Strategy#tools_for, Strategy#mat2_essential?, Mat2.supports?). One
+  # definition so every routing path normalizes the extension identically —
+  # a future tweak (double extensions, locale-safe downcasing) lands once.
+  def self.ext_of(path)
+    File.extname(path.to_s).downcase.delete('.')
+  end
+
+  # Marker embedded in every staging-temp filename (Runner, Ffmpeg, Qpdf) and
+  # matched by Runner#skip?, so a leftover temp from an interrupted run is
+  # ignored on a later directory scan. One literal keeps the producers and the
+  # matcher from drifting (qpdf previously embedded a divergent
+  # ".metaclean.qpdf.tmp." that didn't contain this marker).
+  TMP_MARKER = '.metaclean.tmp.'
+
+  # Suffix of the default "<name>_clean.<ext>" outputs. Runner#build_clean_path
+  # writes it; CLEAN_OUTPUT_RE derives the loop-prevention match from it so the
+  # producer and Runner#skip? can't disagree.
+  CLEAN_SUFFIX = '_clean'
+
+  # Matches our own "<name>_clean.<ext>" outputs (with optional "_N" collision
+  # counter) so a recursive re-run doesn't re-clean them. Compiled once here,
+  # in the module body that runs after the requires, so CLEAN_SUFFIX exists.
+  CLEAN_OUTPUT_RE = /#{Regexp.escape(CLEAN_SUFFIX)}(_\d+)?\.[^.]+\z/
+
   # Preflight: all four tools must be installed. We run them together for full
   # coverage and to verify the strip, so a partial toolchain is not "good enough"
   # — bail with one clear message naming what's missing and how to install

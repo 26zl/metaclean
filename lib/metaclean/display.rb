@@ -23,6 +23,17 @@ module Metaclean
     # Excluding these makes the diff focus on what actually got stripped.
     NON_METADATA_GROUPS = %w[System File ExifTool Composite].freeze
 
+    # ASCII wordmark shown at the top of --help / --version. Printed by `banner`
+    # (see there for why it's colored line-by-line).
+    LOGO = <<~ART
+      ███╗   ███╗███████╗████████╗ █████╗  ██████╗██╗     ███████╗ █████╗ ███╗   ██╗
+      ████╗ ████║██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║     ██╔════╝██╔══██╗████╗  ██║
+      ██╔████╔██║█████╗     ██║   ███████║██║     ██║     █████╗  ███████║██╔██╗ ██║
+      ██║╚██╔╝██║██╔══╝     ██║   ██╔══██║██║     ██║     ██╔══╝  ██╔══██║██║╚██╗██║
+      ██║ ╚═╝ ██║███████╗   ██║   ██║  ██║╚██████╗███████╗███████╗██║  ██║██║ ╚████║
+      ╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝
+    ART
+
     module_function
 
     # Decides whether to emit ANSI color codes. Colors are wrong when:
@@ -45,6 +56,15 @@ module Metaclean
       return text unless color?
 
       "#{COLORS[color]}#{text}#{COLORS[:reset]}"
+    end
+
+    # Cyan ASCII wordmark + one-line tagline for --help / --version.
+    # Colored line-by-line on purpose: `c` runs text through `printable`, which
+    # turns control chars (including the heredoc's newlines) into spaces — so
+    # coloring the whole block at once would collapse the logo onto one line.
+    def banner
+      LOGO.each_line { |line| puts c(line.chomp, :cyan) }
+      puts c('  strip EXIF · IPTC · XMP · GPS · ID3 — leave the file clean', :gray)
     end
 
     def header(text)

@@ -79,8 +79,9 @@ module Metaclean
 
         o.separator ''
         o.separator 'Other:'
-        o.on('-h', '--help')    { puts o; exit }
+        o.on('-h', '--help')    { Display.banner; puts o; exit }
         o.on('-v', '--version') do
+          Display.banner
           puts "metaclean #{Metaclean::VERSION}"
           # Route tool versions (from the binaries' own stdout) through printable,
           # like every other output path, so a tool emitting ANSI/OSC control
@@ -107,6 +108,7 @@ module Metaclean
 
       # No paths: show help, exit non-zero so scripts notice.
       if @argv.empty?
+        Display.banner
         puts parser
         exit 1
       end

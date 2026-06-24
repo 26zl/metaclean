@@ -80,7 +80,7 @@ module Metaclean
     # for maximum coverage — there is no per-tool opt-out; a tool that isn't
     # installed is simply left out (the `.available?`/`.supports?` checks).
     def tools_for(path)
-      ext = File.extname(path).downcase.delete('.')
+      ext = Metaclean.ext_of(path)
       tools = []
 
       if ext == 'pdf'
@@ -169,7 +169,7 @@ module Metaclean
 
     # Does this path need mat2 for adequate coverage? (See MAT2_ESSENTIAL.)
     def mat2_essential?(path)
-      MAT2_ESSENTIAL.include?(File.extname(path).downcase.delete('.'))
+      MAT2_ESSENTIAL.include?(Metaclean.ext_of(path))
     end
   end
 end
