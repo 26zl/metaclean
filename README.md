@@ -91,6 +91,27 @@ install cleanly there, and metaclean requires all four tools. Use
 **[WSL2](https://learn.microsoft.com/windows/wsl/install)** with Ubuntu and
 follow the Debian / Ubuntu line above — everything runs inside WSL.
 
+### Android
+
+There's no native Android app, but the full CLI runs unchanged inside
+**[Termux](https://f-droid.org/packages/com.termux/)** (install it from F-Droid,
+not the Play Store) via a Debian proot — where `mat2` and the other three tools
+install cleanly from `apt`:
+
+```bash
+pkg install proot-distro
+termux-setup-storage                 # tap "Allow" to grant access to your files
+proot-distro install debian
+proot-distro login debian --bind ~/storage/shared:/sdcard
+# now inside Debian:
+apt update && apt install -y ruby mat2 libimage-exiftool-perl qpdf ffmpeg
+gem install metaclean
+metaclean /sdcard/DCIM/Camera/photo.jpg
+```
+
+The `--bind` is what lets metaclean reach your photos — without it Debian can't
+see the phone's storage.
+
 ## Quick start
 
 These examples assume metaclean is installed as a gem. From a source checkout,
@@ -135,8 +156,8 @@ secret**; the one-time prerequisite is registering this gem's Trusted Publisher
 on rubygems.org.
 
 ```bash
-git tag v2.0.0
-git push origin v2.0.0
+git tag v3.0.0
+git push origin v3.0.0
 ```
 
 ## Safety
