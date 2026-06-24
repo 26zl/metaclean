@@ -58,12 +58,13 @@ module Metaclean
       "#{COLORS[color]}#{text}#{COLORS[:reset]}"
     end
 
-    # Cyan ASCII wordmark + one-line tagline for --help / --version.
-    # Colored line-by-line on purpose: `c` runs text through `printable`, which
-    # turns control chars (including the heredoc's newlines) into spaces — so
-    # coloring the whole block at once would collapse the logo onto one line.
+    # Red ASCII wordmark (matches Ruby's brand color) + one-line tagline for
+    # --help / --version. Colored line-by-line on purpose: `c` runs text through
+    # `printable`, which turns control chars (including the heredoc's newlines)
+    # into spaces — so coloring the whole block at once would collapse the logo
+    # onto one line.
     def banner
-      LOGO.each_line { |line| puts c(line.chomp, :cyan) }
+      LOGO.each_line { |line| puts c(line.chomp, :red) }
       puts c('  strip EXIF · IPTC · XMP · GPS · ID3 — leave the file clean', :gray)
     end
 

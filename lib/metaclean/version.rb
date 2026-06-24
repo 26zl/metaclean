@@ -5,5 +5,5 @@
 # one place to bump.
 
 module Metaclean
-  VERSION = '4.0.0'
+  VERSION = '4.0.1'
 end
