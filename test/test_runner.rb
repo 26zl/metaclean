@@ -671,34 +671,79 @@ class RunnerTest < Minitest::Test
 
   # --- confirmation prompt: proceed only on y/yes, abort on anything else ---
   # (incl. nil from Ctrl-D) so a bare Enter never silently overwrites files.
+  # Returns [files_cleaned, exit_status] — an abort must both run nothing AND
+  # exit non-zero so a non-interactive caller can't read it as success.
   def run_with_stdin(input)
     r = Metaclean::Runner.new({}) # not force, not dry_run → prompt shows
     ran = []
+    status = 0
     orig = $stdin
     $stdin = StringIO.new(input)
-    capture_io do
-      r.stub(:expand_files, ['photo.jpg']) do
-        r.stub(:announce_tools, nil) do
-          r.stub(:clean_one, ->(*) { ran << :ran; { status: :cleaned, removed: 0, residual: 0 } }) do
-            r.clean_paths(['photo.jpg'])
+    begin
+      capture_io do
+        r.stub(:expand_files, ['photo.jpg']) do
+          r.stub(:announce_tools, nil) do
+            r.stub(:clean_one, ->(*) { ran << :ran; { status: :cleaned, removed: 0, residual: 0 } }) do
+              r.clean_paths(['photo.jpg'])
+            end
           end
         end
       end
+    rescue SystemExit => e
+      status = e.status
     end
-    ran
+    [ran, status]
   ensure
     $stdin = orig
   end
 
   def test_confirmation_prompt_proceeds_on_yes
-    assert_equal [:ran], run_with_stdin("y\n")
+    ran, status = run_with_stdin("y\n")
+    assert_equal [:ran], ran
+    assert_equal 0, status
   end
 
   def test_confirmation_prompt_aborts_on_blank_enter
-    assert_empty run_with_stdin("\n")
+    ran, status = run_with_stdin("\n")
+    assert_empty ran
+    assert_equal 1, status, 'a blank-Enter abort must exit non-zero'
   end
 
   def test_confirmation_prompt_aborts_on_eof
-    assert_empty run_with_stdin('') # gets => nil, as on Ctrl-D
+    ran, status = run_with_stdin('') # gets => nil, as on Ctrl-D
+    assert_empty ran
+    assert_equal 1, status, 'an EOF abort must exit non-zero'
+  end
+
+  # A path we couldn't read during discovery (missing arg, unreadable dir) makes
+  # the whole batch exit non-zero, even when the files that WERE found cleaned —
+  # otherwise automation reads a partial recursive run as fully done.
+  def test_clean_paths_exits_nonzero_when_a_path_could_not_be_scanned
+    Dir.mktmpdir do |d|
+      good = File.join(d, 'a.jpg')
+      File.write(good, 'x')
+      r = Metaclean::Runner.new(force: true)
+      r.stub(:announce_tools, nil) do
+        r.stub(:clean_one, { status: :cleaned, removed: 0, residual: 0 }) do
+          err = assert_raises(SystemExit) do
+            capture_io { r.clean_paths([good, File.join(d, 'does-not-exist')]) }
+          end
+          assert_equal 1, err.status
+        end
+      end
+    end
+  end
+
+  # --inspect used as a gate must exit non-zero if a file couldn't be read, so a
+  # script doesn't mistake "unreadable" for "no metadata".
+  def test_inspect_paths_exits_nonzero_when_a_file_cannot_be_read
+    Dir.mktmpdir do |d|
+      f = File.join(d, 'a.jpg')
+      File.write(f, 'x')
+      Metaclean::Exiftool.stub(:read, ->(_p) { raise Metaclean::Error, 'unreadable' }) do
+        err = assert_raises(SystemExit) { capture_io { @r.inspect_paths([f]) } }
+        assert_equal 1, err.status
+      end
+    end
   end
 end

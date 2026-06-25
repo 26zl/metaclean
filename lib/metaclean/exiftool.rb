@@ -50,7 +50,7 @@ module Metaclean
     #   -n         Numeric values (no human formatting like "1/100 sec")
     #   -api largefilesupport=1   Allow files >4 GB
     def read(path)
-      out, err, status = Open3.capture3(
+      out, err, status = Metaclean.capture3(
         'exiftool', '-j', '-G1', '-a', '-u', '-s', '-n', '-api', 'largefilesupport=1',
         Metaclean.safe_path(path)
       )
@@ -111,7 +111,7 @@ module Metaclean
       also_delete.each { |tag| args << "-#{tag}=" }
       args.concat(['-overwrite_original', '-q', '-q', '-api', 'largefilesupport=1', Metaclean.safe_path(path)])
 
-      _out, err, status = Open3.capture3(*args)
+      _out, err, status = Metaclean.capture3(*args)
       return true if status.success?
       return :unsupported if err.match?(WRITE_UNSUPPORTED_RE)
 

@@ -8,7 +8,10 @@ require_relative 'test_helper'
 # shell-out with a fake Process::Status.
 class QpdfTest < Minitest::Test
   def qpdf_temps(dir)
-    Dir.children(dir).grep(/\.metaclean\.qpdf\.tmp\./)
+    # Match the SHARED marker the production code actually writes
+    # (".metaclean.tmp.qpdf…"); the old literal ".metaclean.qpdf.tmp." matched
+    # nothing, so a leftover-temp regression would have slipped through.
+    Dir.children(dir).grep(/#{Regexp.escape(Metaclean::TMP_MARKER)}/)
   end
 
   def status(success, code)
@@ -24,7 +27,7 @@ class QpdfTest < Minitest::Test
       File.write(f, 'ORIG')
       writer = ->(*a) { File.write(a.last, 'REBUILT'); ['', '', status(true, 0)] }
       Metaclean::Qpdf.stub(:available?, true) do
-        Open3.stub(:capture3, writer) do
+        Metaclean.stub(:capture3, writer) do
           assert_equal true, Metaclean::Qpdf.rebuild!(f)
         end
       end
@@ -40,7 +43,7 @@ class QpdfTest < Minitest::Test
       File.write(f, 'ORIG')
       writer = ->(*a) { File.write(a.last, 'REBUILT'); ['', 'warning', status(false, 3)] }
       Metaclean::Qpdf.stub(:available?, true) do
-        Open3.stub(:capture3, writer) do
+        Metaclean.stub(:capture3, writer) do
           assert_equal true, Metaclean::Qpdf.rebuild!(f)
         end
       end
@@ -54,7 +57,7 @@ class QpdfTest < Minitest::Test
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
       Metaclean::Qpdf.stub(:available?, true) do
-        Open3.stub(:capture3, ['', 'fatal', status(false, 2)]) do
+        Metaclean.stub(:capture3, ['', 'fatal', status(false, 2)]) do
           assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
         end
       end
@@ -70,7 +73,7 @@ class QpdfTest < Minitest::Test
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
       Metaclean::Qpdf.stub(:available?, true) do
-        Open3.stub(:capture3, ['', '', status(true, 0)]) do
+        Metaclean.stub(:capture3, ['', '', status(true, 0)]) do
           assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
         end
       end
@@ -85,7 +88,7 @@ class QpdfTest < Minitest::Test
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
       Metaclean::Qpdf.stub(:available?, true) do
-        Open3.stub(:capture3, ['', 'warning', status(false, 3)]) do
+        Metaclean.stub(:capture3, ['', 'warning', status(false, 3)]) do
           assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
         end
       end

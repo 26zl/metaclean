@@ -34,11 +34,21 @@ jobs:
             echo "::error::Tag ${GITHUB_REF_NAME} does not match gem version v${version}"
             exit 1
           fi
-      - name: Install metadata tools (exiftool, mat2, qpdf, ffmpeg)
-        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg
+      - name: Install metadata tools + format-matrix generators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg \
+            imagemagick ghostscript libreoffice-writer libreoffice-calc zip unzip
       - run: bundle exec rake test
       - run: bundle exec rubocop
       - run: bundle exec bundler-audit check --update
+      # Gate the release on the SAME real-file "no false-clean" matrix CI runs on
+      # PRs. Without this a direct `git push --tags` could publish a gem that was
+      # never checked against actual files of every format.
+      - name: Run the format matrix (real clean of every format)
+        env:
+          METACLEAN_FORMAT_MATRIX: '1'
+        run: bundle exec ruby -Itest test/test_format_matrix.rb
 
   build:
     name: Build & publish gem

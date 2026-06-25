@@ -17,7 +17,7 @@ class FfmpegTest < Minitest::Test
   def test_strip_uses_lossless_copy_and_drops_metadata
     captured = nil
     Metaclean::Ffmpeg.stub(:available?, true) do
-      Open3.stub(:capture3, ->(*a) { captured = a; ['', '', status(true)] }) do
+      Metaclean.stub(:capture3, ->(*a) { captured = a; ['', '', status(true)] }) do
         File.stub(:exist?, true) do
           FileUtils.stub(:mv, nil) do
             File.stub(:delete, nil) do
@@ -39,7 +39,7 @@ class FfmpegTest < Minitest::Test
   # A non-zero exit is a hard error, never a silent success.
   def test_failure_raises
     Metaclean::Ffmpeg.stub(:available?, true) do
-      Open3.stub(:capture3, ['', 'boom', status(false)]) do
+      Metaclean.stub(:capture3, ['', 'boom', status(false)]) do
         File.stub(:exist?, false) do
           assert_raises(Metaclean::Error) { Metaclean::Ffmpeg.strip!('v.mkv') }
         end
@@ -50,7 +50,7 @@ class FfmpegTest < Minitest::Test
   # Exit 0 but no output file written → still an error, not a false success.
   def test_success_exit_but_no_output_raises
     Metaclean::Ffmpeg.stub(:available?, true) do
-      Open3.stub(:capture3, ['', '', status(true)]) do
+      Metaclean.stub(:capture3, ['', '', status(true)]) do
         File.stub(:exist?, false) do
           assert_raises(Metaclean::Error) { Metaclean::Ffmpeg.strip!('v.mkv') }
         end

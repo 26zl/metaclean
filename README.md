@@ -31,7 +31,9 @@ It wraps four battle-tested tools and routes each file to the right one:
 - **Verification-first:** it re-reads the cleaned file and refuses to write a
   result when known privacy metadata survives.
 - **Safer defaults:** it writes `*_clean` copies by default; `--in-place` keeps a
-  `.bak` and asks for confirmation unless `--force` is set.
+  `.bak` and asks for confirmation unless `--force` is set. Note the `.bak` is the
+  **original, with all its metadata** — delete or move the `.bak` files before
+  sharing an in-place-cleaned folder.
 - **Lossless routing:** it avoids mat2 paths that recompress JPEG/WebP or
   downconvert TIFF, and uses ffmpeg stream-copy for Matroska.
 - **Batch-friendly:** failed or unverified files exit non-zero, so scripts and CI
@@ -150,7 +152,7 @@ metaclean --dry-run photo.jpg
 | --- | --- |
 | `--inspect` | Read-only — print metadata, never write |
 | `--dry-run` | Simulate cleaning, show diff, write nothing |
-| `-i`, `--in-place` | Overwrite originals (keeps a `<file>.bak`) |
+| `-i`, `--in-place` | Overwrite originals (keeps a `<file>.bak` — the **original, metadata intact**; remove it before sharing) |
 | `-r`, `--recursive` | Recurse into directories |
 | `-f`, `--force` | Skip the confirmation prompt |
 | `-h`, `--help` | Show usage and exit |
@@ -166,8 +168,8 @@ secret**; the one-time prerequisite is registering this gem's Trusted Publisher
 on rubygems.org.
 
 ```bash
-git tag v3.0.0
-git push origin v3.0.0
+git tag v4.0.1
+git push origin v4.0.1
 ```
 
 ## Safety
@@ -177,6 +179,13 @@ git push origin v3.0.0
 - `--in-place` writes atomically: the file is built in a temp file and
   renamed into place, so a crash mid-run cannot leave a half-written original.
 - Symlinks are always skipped — metaclean never cleans through a link.
+- Folder and recursive (`-r`) scans deliberately skip **hidden files** (dot-prefixed,
+  e.g. `.secret.jpg`) and metaclean's own outputs (`*_clean.*`, `*.bak`), so a
+  directory run does not clean every file in the tree. To clean a hidden file,
+  name it explicitly: `metaclean .secret.jpg`.
+- A `<file>.bak` left by `--in-place` is the **untouched original** and still
+  contains all its metadata. It is reported in the run, but it is yours to delete
+  or move before sharing the folder.
 - Filename collisions (`photo_clean.jpg` already exists, `.bak` already
   exists) are resolved with `_1`, `_2`, … suffixes, including late collisions
   that appear while a file is being cleaned.

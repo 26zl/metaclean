@@ -84,7 +84,7 @@ module Metaclean
       # crashed run, remove it so we don't accidentally use old data.
       File.delete(cleaned) if File.exist?(cleaned)
 
-      out, err, status = Open3.capture3('mat2', safe)
+      out, err, status = Metaclean.capture3('mat2', safe)
 
       # Success path first. mat2 only creates `<name>.cleaned.<ext>` when it
       # actually stripped something; no file after exit 0 means there was

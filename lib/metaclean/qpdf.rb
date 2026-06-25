@@ -52,7 +52,7 @@ module Metaclean
       src = Metaclean.safe_path(path)
       tmp = tmp_path_for(path)
 
-      _out, err, status = Open3.capture3(
+      _out, err, status = Metaclean.capture3(
         'qpdf', '--linearize', '--object-streams=generate',
         '--remove-unreferenced-resources=yes', src, Metaclean.safe_path(tmp)
       )

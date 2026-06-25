@@ -76,7 +76,7 @@ module Metaclean
 
     # Returns an ordered list of tool symbols (e.g. `[:mat2, :exiftool, :qpdf]`)
     # to run on `path`. The runner executes them in order; if one fails or
-    # is skipped, the next still runs. The three tools are always used together
+    # is skipped, the next still runs. The tools are always used together
     # for maximum coverage — there is no per-tool opt-out; a tool that isn't
     # installed is simply left out (the `.available?`/`.supports?` checks).
     def tools_for(path)

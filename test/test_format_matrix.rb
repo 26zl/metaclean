@@ -100,8 +100,9 @@ class FormatMatrixTest < Minitest::Test
     Dir.mktmpdir do |d|
       zip = File.join(d, 'a.zip')
       assert gen_zip(zip), 'could not build a zip sample'
+      assert still_leaks?(zip), 'zip: precondition — the comment marker must be present before cleaning'
       assert_equal :cleaned, clean_status(zip), 'zip should clean'
-      refute still_leaks?(zip), 'zip: a privacy tag survived a :cleaned report'
+      refute still_leaks?(zip), 'zip: the comment marker survived a :cleaned report (false-clean)'
 
       epub = File.join(d, 'b.epub')
       if gen_epub(epub)
@@ -247,6 +248,12 @@ class FormatMatrixTest < Minitest::Test
       File.write(File.join(t, 'f.txt'), 'data')
       sh('zip', '-jq', path, File.join(t, 'f.txt'))
     end
+    return unless made?(path)
+
+    # Set a ZIP archive comment carrying the marker (exiftool surfaces it as
+    # File:Comment). Without identifying metadata to strip, the "should clean"
+    # check below would pass vacuously — the marker is what makes it real.
+    IO.popen(['zip', '-z', path], 'w', out: File::NULL, err: File::NULL) { |io| io.puts MARKER }
     path if made?(path)
   end
 

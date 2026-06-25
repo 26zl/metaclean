@@ -15,7 +15,7 @@ class ExiftoolTest < Minitest::Test
 
   def test_strip_success_returns_true
     Metaclean::Exiftool.stub(:available?, true) do
-      Open3.stub(:capture3, ['', '', status(true)]) do
+      Metaclean.stub(:capture3, ['', '', status(true)]) do
         assert_equal true, Metaclean::Exiftool.strip!('photo.jpg')
       end
     end
@@ -24,7 +24,7 @@ class ExiftoolTest < Minitest::Test
   # Generic failure → hard error, never a silent success.
   def test_failure_raises
     Metaclean::Exiftool.stub(:available?, true) do
-      Open3.stub(:capture3, ['', 'boom', status(false)]) do
+      Metaclean.stub(:capture3, ['', 'boom', status(false)]) do
         assert_raises(Metaclean::Error) { Metaclean::Exiftool.strip!('photo.jpg') }
       end
     end
@@ -35,7 +35,7 @@ class ExiftoolTest < Minitest::Test
   def test_strip_also_deletes_named_tags_and_gps
     captured = nil
     Metaclean::Exiftool.stub(:available?, true) do
-      Open3.stub(:capture3, ->(*a) { captured = a; ['', '', status(true)] }) do
+      Metaclean.stub(:capture3, ->(*a) { captured = a; ['', '', status(true)] }) do
         Metaclean::Exiftool.strip!('a.tiff', also_delete: %w[Artist Software])
       end
     end
@@ -50,7 +50,7 @@ class ExiftoolTest < Minitest::Test
   def test_unsupported_write_format_returns_soft_skip
     err = 'Error: Writing of DOCX files is not yet supported'
     Metaclean::Exiftool.stub(:available?, true) do
-      Open3.stub(:capture3, ['', err, status(false)]) do
+      Metaclean.stub(:capture3, ['', err, status(false)]) do
         assert_equal :unsupported, Metaclean::Exiftool.strip!('report.docx')
       end
     end
@@ -67,7 +67,7 @@ class ExiftoolTest < Minitest::Test
       'a.svg'  => 'Error: ExifTool does not yet support writing of SVG images'
     }.each do |path, err|
       Metaclean::Exiftool.stub(:available?, true) do
-        Open3.stub(:capture3, ['', err, status(false)]) do
+        Metaclean.stub(:capture3, ['', err, status(false)]) do
           assert_equal :unsupported, Metaclean::Exiftool.strip!(path), err
         end
       end

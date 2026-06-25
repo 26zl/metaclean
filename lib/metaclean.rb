@@ -2,6 +2,8 @@
 
 # Library entry point. require order matters: dependencies before dependents.
 
+require 'open3'
+
 require 'metaclean/version'
 require 'metaclean/display'
 require 'metaclean/exiftool'
@@ -29,6 +31,80 @@ module Metaclean
   def self.safe_path(path)
     s = path.to_s
     s.start_with?('-') ? File.join('.', s) : s
+  end
+
+  # External tools can hang, or run away producing endless output, on a corrupt
+  # or hostile file. Every OPERATIONAL shell-out (read/strip/rebuild) goes through
+  # this instead of Open3.capture3 so one bad file is bounded on BOTH axes — by
+  # wall-clock (COMMAND_TIMEOUT) and by captured bytes (MAX_OUTPUT_BYTES) — rather
+  # than hanging or exhausting memory and taking the whole batch with it. The
+  # quick availability probes (`-ver`/`--version`) stay on plain capture3: fixed
+  # args, no file input, nothing to hang on.
+  COMMAND_TIMEOUT = 120 # seconds
+  # Per stream (stdout AND stderr). Far above any legitimate output from the
+  # tools' invocations here (metadata JSON / `-q` strips / `-v error` muxes), so
+  # tripping it means a runaway, not a real result.
+  MAX_OUTPUT_BYTES = 64 * 1024 * 1024
+  READ_CHUNK = 64 * 1024
+
+  # Drop-in replacement for Open3.capture3 that returns the same [out, err,
+  # status] triple but kills the command (and anything it spawned) if it runs
+  # past `timeout` OR floods more than `max_output` bytes on either stream.
+  def self.capture3(*cmd, timeout: COMMAND_TIMEOUT, max_output: MAX_OUTPUT_BYTES)
+    Open3.popen3(*cmd, pgroup: true) do |stdin, stdout, stderr, wait_thr|
+      stdin.close
+      # Drain both pipes concurrently: a tool that fills one pipe buffer would
+      # otherwise block forever before exiting, and `join` below would never see
+      # it finish even though it isn't actually hung.
+      out_t = read_capped(stdout, max_output, wait_thr)
+      err_t = read_capped(stderr, max_output, wait_thr)
+
+      if wait_thr.join(timeout).nil?
+        kill_group(wait_thr)
+        out_t.join(2)
+        err_t.join(2)
+        raise Error, "#{cmd.first} timed out after #{timeout}s"
+      end
+
+      out, out_over = out_t.value
+      err, err_over = err_t.value
+      raise Error, "#{cmd.first} exceeded the #{max_output}-byte output limit" if out_over || err_over
+
+      [out, err, wait_thr.value]
+    end
+  end
+
+  # Read an IO into a String in a thread, but stop accumulating once it passes
+  # `limit` bytes — and kill the command then, so a flooding stream is cut off
+  # promptly instead of waiting out the full timeout. After the cap is hit it
+  # keeps draining (discarding) so the dying child isn't blocked on a full pipe.
+  # Returns [string, overflowed?].
+  def self.read_capped(io, limit, wait_thr)
+    Thread.new do
+      buf = +''
+      over = false
+      while (chunk = io.read(READ_CHUNK))
+        next if over # past the cap: drain & discard so the child can exit
+
+        buf << chunk
+        next unless buf.bytesize > limit
+
+        over = true
+        buf = buf.byteslice(0, limit)
+        kill_group(wait_thr)
+      end
+      [buf, over]
+    end
+  end
+
+  # SIGTERM the child's whole process group — pgroup:true made the child the
+  # group leader, so any helpers it forked are signalled too — escalating to
+  # SIGKILL if it ignores TERM. A negative pid targets the group.
+  def self.kill_group(wait_thr)
+    Process.kill('-TERM', wait_thr.pid)
+    Process.kill('-KILL', wait_thr.pid) unless wait_thr.join(2)
+  rescue Errno::ESRCH, Errno::EPERM
+    nil # already gone, or not permitted to signal it — nothing more to do
   end
 
   # Lower-cased, dot-stripped extension used for FORMAT ROUTING decisions

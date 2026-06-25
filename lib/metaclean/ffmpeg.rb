@@ -51,7 +51,7 @@ module Metaclean
       # Clear any stale temp from an earlier crashed run before muxing.
       File.delete(tmp) if File.exist?(tmp)
 
-      _out, err, status = Open3.capture3(
+      _out, err, status = Metaclean.capture3(
         'ffmpeg', '-y', '-v', 'error', '-nostdin', '-i', file_url(path),
         '-map', '0', '-map_metadata', '-1', '-map_chapters', '-1', '-c', 'copy',
         file_url(tmp)

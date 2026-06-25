@@ -17,6 +17,10 @@ module Metaclean
   class Runner
     def initialize(options)
       @options = options
+      # Paths that couldn't be read during discovery (missing arg, unreadable
+      # directory). Tracked so a partially-scanned batch exits non-zero instead
+      # of letting automation mistake "some files cleaned" for "everything done".
+      @scan_errors = 0
     end
 
     # Public entry points: one for `--inspect`, one for the cleaning flow.
@@ -27,6 +31,7 @@ module Metaclean
         Display.warning('No files to inspect.')
         exit 1
       end
+      failed = 0
       files.each do |file|
         Display.header "📄 #{file}"
         meta = Exiftool.read(file)
@@ -36,7 +41,13 @@ module Metaclean
         # One unreadable/odd file shouldn't abort inspecting the rest — mirrors
         # the per-file rescue in the clean batch.
         warn Display.error("#{file}: #{e.message}")
+        failed += 1
       end
+
+      # A file we couldn't read is a non-zero condition: a script using --inspect
+      # as a gate must not mistake "couldn't read it" for "no metadata". Discovery
+      # errors (missing paths / unreadable dirs) count too.
+      exit 1 if failed.positive? || @scan_errors.positive?
     end
 
     def clean_paths(paths)
@@ -55,11 +66,19 @@ module Metaclean
         action = @options[:in_place] ? 'OVERWRITE' : 'create cleaned copies of'
         puts Display.c("About to #{action} #{files.size} file(s).", :yellow)
         if @options[:in_place]
-          puts Display.c('Backups will be saved alongside as <file>.bak.', :gray)
+          # The .bak IS the original — metadata intact. Say so plainly: a user who
+          # shares the "cleaned" folder would otherwise leak it via the backup.
+          puts Display.c('Each <file>.bak is the ORIGINAL, with all metadata still in it — ' \
+                         'delete or move the .bak files before sharing the folder.', :yellow)
         end
         print Display.c('Proceed? [y/N] ', :bold)
         ans = $stdin.gets&.strip&.downcase # gets → nil on Ctrl-D
-        return Display.warning('Aborted.') unless %w[y yes].include?(ans)
+        # Abort (no/blank/EOF) is a non-zero exit, not silent success — a
+        # non-interactive caller must not read "Aborted." as "files were cleaned".
+        unless %w[y yes].include?(ans)
+          Display.warning('Aborted.')
+          exit 1
+        end
       end
 
       summary = { cleaned: 0, unverified: 0, failed: 0, removed_total: 0, residual_files: 0 }
@@ -81,8 +100,9 @@ module Metaclean
 
       print_summary(summary)
 
-      # Non-zero exit so CI/scripts can detect a failed or not-fully-verified file.
-      exit 1 if summary[:failed].positive? || summary[:unverified].positive?
+      # Non-zero exit so CI/scripts can detect a failed or not-fully-verified file,
+      # OR a batch that was never fully discovered (a path/dir we couldn't read).
+      exit 1 if summary[:failed].positive? || summary[:unverified].positive? || @scan_errors.positive?
     end
 
     private
@@ -487,6 +507,9 @@ module Metaclean
       if summary[:residual_files].positive?
         Display.warning "Files with privacy residual: #{summary[:residual_files]}"
       end
+      if @scan_errors.positive?
+        Display.warning "Paths skipped during discovery (not found or unreadable): #{@scan_errors}"
+      end
     end
 
     # File discovery — turning the user's paths into a flat list.
@@ -510,6 +533,7 @@ module Metaclean
           explicit << p
         else
           Display.warning "Not found: #{p}"
+          @scan_errors += 1
         end
       end
       discovered.reject! { |f| skip?(f) }
@@ -559,6 +583,7 @@ module Metaclean
       # warn and skip this directory so one bad entry doesn't abort discovery of
       # the rest of the batch.
       Display.warning "Skipping #{dir}: #{e.message}"
+      @scan_errors += 1
     end
 
     # Manual recursive walker. Symlinks are always skipped (never followed), so
@@ -579,6 +604,7 @@ module Metaclean
       # warn and skip this directory so one bad entry doesn't abort discovery of
       # the rest of the batch.
       Display.warning "Skipping #{dir}: #{e.message}"
+      @scan_errors += 1
     end
 
     # Files we never touch when DISCOVERED via directory scanning. This is

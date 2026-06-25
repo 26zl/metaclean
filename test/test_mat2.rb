@@ -19,7 +19,7 @@ class Mat2Test < Minitest::Test
       f = File.join(d, 'note.bin')
       File.write(f, 'x')
       Metaclean::Mat2.stub(:available?, true) do
-        Open3.stub(:capture3, ['', 'note.bin: this file type is not supported', failed]) do
+        Metaclean.stub(:capture3, ['', 'note.bin: this file type is not supported', failed]) do
           assert_equal :unsupported, Metaclean::Mat2.strip!(f)
         end
       end
@@ -36,7 +36,7 @@ class Mat2Test < Minitest::Test
       f = File.join(d, 'note.bin')
       File.write(f, 'x')
       Metaclean::Mat2.stub(:available?, true) do
-        Open3.stub(:capture3, ['', 'mat2: internal error', failed]) do
+        Metaclean.stub(:capture3, ['', 'mat2: internal error', failed]) do
           assert_raises(Metaclean::Error) { Metaclean::Mat2.strip!(f) }
         end
       end
@@ -55,7 +55,7 @@ class Mat2Test < Minitest::Test
       cleaned = File.join(d, 'pic.cleaned.jpg')
       writer = ->(*_a) { File.write(cleaned, 'CLEAN'); ['', '', ok] }
       Metaclean::Mat2.stub(:available?, true) do
-        Open3.stub(:capture3, writer) do
+        Metaclean.stub(:capture3, writer) do
           assert_equal true, Metaclean::Mat2.strip!(f)
         end
       end
@@ -74,7 +74,7 @@ class Mat2Test < Minitest::Test
       f = File.join(d, 'pic.jpg')
       File.write(f, 'ORIG')
       Metaclean::Mat2.stub(:available?, true) do
-        Open3.stub(:capture3, ['', '', ok]) do
+        Metaclean.stub(:capture3, ['', '', ok]) do
           assert_equal :no_metadata, Metaclean::Mat2.strip!(f)
         end
       end

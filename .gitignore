@@ -1,4 +1,9 @@
 # Ruby / Bundler
+# Deliberate library-gem policy: a published gem resolves its dependencies from
+# the gemspec's version constraints, so we intentionally do NOT commit
+# Gemfile.lock or pin .ruby-version. CI (ci.yml) instead tests the whole
+# supported range — Ruby 3.2, 3.3, 3.4 and 4.0 — which a committed lock/pin would
+# hide. (This is Bundler's standard "gem vs. application" lockfile guidance.)
 *.gem
 *.rbc
 .bundle/
