@@ -17,13 +17,14 @@ Gem::Specification.new do |s|
   s.license     = 'MIT'
   s.required_ruby_version = '>= 3.2'
 
-  s.files       = Dir['lib/**/*.rb', 'bin/*', 'README.md', 'LICENSE']
+  s.files       = Dir['lib/**/*.rb', 'bin/*', 'README.md', 'SECURITY.md', 'LICENSE']
   s.bindir      = 'bin'
   s.executables = ['metaclean']
   s.require_paths = ['lib']
   s.metadata = {
     'allowed_push_host' => 'https://rubygems.org',
     'bug_tracker_uri' => 'https://github.com/26zl/metaclean/issues',
+    'documentation_uri' => 'https://github.com/26zl/metaclean#readme',
     'source_code_uri' => 'https://github.com/26zl/metaclean',
     'rubygems_mfa_required' => 'true'
   }
@@ -32,4 +33,5 @@ Gem::Specification.new do |s|
   s.requirements << 'mat2 (https://github.com/jvoisin/mat2) on PATH — required'
   s.requirements << 'qpdf (https://qpdf.sourceforge.io) on PATH — required'
   s.requirements << 'ffmpeg (https://ffmpeg.org) on PATH — required'
+  s.requirements << 'POSIX cp with metadata-preservation support — required for --in-place'
 end

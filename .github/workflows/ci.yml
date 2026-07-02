@@ -1,14 +1,10 @@
 name: CI
 
-# Runs on every push and pull request so a regression in the strip/verify
-# logic is caught before it can be tagged and released.
 on:
   push:
     branches: [main]
   pull_request:
 
-# Least-privilege default: these jobs only read the repo. Without this, every job
-# inherits the broad default GITHUB_TOKEN scopes (flagged by CodeQL).
 permissions:
   contents: read
 
@@ -20,10 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        # Exercise the declared support floor (>= 3.2) through the current major.
         ruby: ['3.2', '3.3', '3.4', '4.0']
-        # A macOS leg covers the non-Linux POSIX path. Native Windows isn't
-        # supported (use WSL2, which is Linux), so there's no Windows leg.
         include:
           - os: macos-latest
             ruby: '3.4'
@@ -33,17 +26,21 @@ jobs:
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
-      # Install the real tools so the integration tests exercise the ACTUAL
-      # strip/verify flow instead of auto-skipping. Linux is the primary leg and
-      # must succeed; the macOS install is best-effort (the suite auto-skips any
-      # missing tool), so a hiccup in a third-party formula doesn't fail the run.
       - name: Install metadata tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg attr acl
       - name: Install metadata tools (macOS)
         if: runner.os == 'macOS'
         continue-on-error: true
         run: brew install exiftool qpdf mat2 ffmpeg
+      - name: Fail if any macOS tool is missing
+        if: runner.os == 'macOS'
+        run: |
+          for t in exiftool mat2 qpdf ffmpeg; do
+            command -v "$t" >/dev/null || { echo "::error::$t did not install on the macOS runner"; exit 1; }
+          done
+      - name: Record tested tool versions
+        run: ./bin/metaclean --version
       - run: bundle exec rake test
 
   lint:
@@ -56,15 +53,25 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
       - run: bundle exec rubocop
+      - run: bundle exec bundler-audit check --update
 
-  # Opt-in "every format" matrix: generates a real sample of every format
-  # metaclean routes (images/audio/video/pdf/archives/office), cleans it, and
-  # asserts no false-clean + lossless content. Separate from the fast unit job
-  # because it also needs the file GENERATORS (ImageMagick, ghostscript,
-  # LibreOffice) and is slower. The matrix test skips unless METACLEAN_FORMAT_MATRIX
-  # is set, so it only runs here.
+  coverage:
+    name: Coverage floor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: ruby/setup-ruby@89f90524b88a01fe6e0b732220432cc6142926af # v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Install metadata tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg ghostscript attr acl
+      - run: bundle exec ruby -Itest test/coverage_runner.rb
+
   format-matrix:
-    name: Format matrix (real clean of every format)
+    name: Real-file format matrix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -76,9 +83,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libimage-exiftool-perl mat2 qpdf ffmpeg \
-            imagemagick ghostscript libreoffice-writer libreoffice-calc zip unzip
-      # ImageMagick disables the PDF coder by default on CI for security; the
-      # matrix's PDF case uses ghostscript instead, so this is only a safety net.
+            imagemagick ghostscript zip unzip
       - name: Run the format matrix
         env:
           METACLEAN_FORMAT_MATRIX: '1'

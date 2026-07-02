@@ -1,8 +1,3 @@
-# metaclean predates RuboCop and has a deliberate, consistent house style.
-# We tune the linter to the code (not the code to RuboCop defaults): the
-# metric/shape cops are relaxed, and the handful of style cops below are
-# disabled where they only disagree with an intentional choice. The genuinely
-# useful Lint/Layout correctness cops stay on.
 AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
@@ -11,51 +6,77 @@ AllCops:
     - 'pkg/**/*'
     - 'vendor/**/*'
     - 'tmp/**/*'
-    - 'test/**/*' # tests favor readability over the library's strict style
-
-# Long, heavily-commented methods are a deliberate choice in a small CLI.
-Metrics:
-  Enabled: false
 
 Layout/LineLength:
   Max: 130
+  Exclude:
+    - 'test/**/*'
 
-# --- Cops disabled to match the established house style ---
+Metrics/AbcSize:
+  Max: 55
+  AllowedMethods: [option_parser]
+Metrics/BlockLength:
+  Max: 35
+Metrics/ClassLength:
+  Max: 350
+  Exclude:
+    - 'test/**/*'
+Metrics/CyclomaticComplexity:
+  Max: 16
+Metrics/MethodLength:
+  Max: 60
+Metrics/ModuleLength:
+  Max: 200
+Metrics/PerceivedComplexity:
+  Max: 16
+
 Style/Documentation:
-  Enabled: false # documented with header comment blocks, not class rdoc
+  Enabled: false
 Style/RescueStandardError:
-  Enabled: false # `rescue StandardError` for realpath fallbacks is intentional
+  Enabled: false
 Style/SingleLineMethods:
-  Enabled: false # Display.section/info/success/... are deliberately one line
+  Enabled: false
 Style/Semicolon:
-  Enabled: false # `puts o; exit` one-liners in the option parser
+  Enabled: false
 Style/StringLiterals:
-  Enabled: false # double quotes used for the ✓/⚠/▸ glyph output lines
+  Enabled: false
 Style/FormatStringToken:
-  Enabled: false # `%-38s` column formatting is clearer unannotated
+  Enabled: false
 Style/ConcatArrayLiterals:
-  Enabled: false # `args.concat([...])` reads as "append these args"
+  Enabled: false
 Style/RedundantFreeze:
-  Enabled: false # every constant is frozen for consistency
+  Enabled: false
 Style/HashExcept:
-  Enabled: false # explicit `reject { |k, _| k == 'SourceFile' }` is clear
+  Enabled: false
 Style/GuardClause:
   Enabled: false
 Style/IfUnlessModifier:
   Enabled: false
 Naming/MethodParameterName:
-  Enabled: false # short params (c(text), v, n, k) suit these tiny helpers
+  Enabled: false
 Layout/HashAlignment:
-  Enabled: false # hashes align values, not keys
+  Enabled: false
 Layout/SpaceAfterSemicolon:
-  Enabled: false # goes with the one-line Display helpers
+  Enabled: false
 Layout/EmptyLinesAroundAccessModifier:
-  Enabled: false # module_function placement is intentional
+  Enabled: false
 Layout/ExtraSpacing:
-  Enabled: false # aligned trailing assignments
+  Enabled: false
 Lint/NonAtomicFileOperation:
-  Enabled: false # the exist?-then-delete cleanup is intentional and guarded
+  Enabled: false
 
-# --- Packaging ---
 Gemspec/DevelopmentDependencies:
-  Enabled: false # dev deps live in the Gemfile, not the gemspec
+  Enabled: false
+
+Naming/VariableNumber:
+  Exclude:
+    - 'test/**/*'
+Style/FetchEnvVar:
+  Exclude:
+    - 'test/**/*'
+Style/HashLikeCase:
+  Exclude:
+    - 'test/**/*'
+Style/RedundantLineContinuation:
+  Exclude:
+    - 'test/**/*'

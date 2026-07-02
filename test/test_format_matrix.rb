@@ -3,25 +3,10 @@
 require_relative 'test_helper'
 require 'digest'
 
-# The "every format" matrix, end-to-end against the REAL binaries. For each
-# format metaclean routes, it generates a sample carrying real metadata, cleans
-# it in place, and checks the core guarantees:
-#
-#   * NO FALSE-CLEAN: a file reported :cleaned must have its identifying metadata
-#     actually gone — the worst-case failure for a privacy tool.
-#   * The formats we commit to (images, audio, video, pdf, archives, documents)
-#     reach :cleaned, and media stays byte-identical (lossless).
-#   * A format no installed tool can clean (e.g. SVG on a mat2 build that crashes
-#     on it) FAILS CLOSED (:failed, original untouched) rather than leaking.
-#
-# It is OPT-IN: it needs extra generators (ImageMagick/ffmpeg/ghostscript/soffice)
-# on top of the four cleaning tools and is slower than the pure suite, so it only
-# runs when METACLEAN_FORMAT_MATRIX is set (the dedicated CI job sets it). Every
-# format auto-skips if the generator it needs is missing, so it never fails
-# spuriously — and each family test refuses to pass vacuously (asserts it tested
-# at least one format).
 class FormatMatrixTest < Minitest::Test
   MARKER = 'PRIVACYMATRIXMARKER'
+  TINY_JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAAQABABAREA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AKpgP//Z'
+  UNTAGGABLE_IMAGES = %w[bmp].freeze
 
   def setup
     skip 'set METACLEAN_FORMAT_MATRIX=1 to run the full format matrix' unless ENV['METACLEAN_FORMAT_MATRIX']
@@ -30,70 +15,74 @@ class FormatMatrixTest < Minitest::Test
     skip "cleaning tools missing: #{missing.join(', ')}" unless missing.empty?
   end
 
-  # ---- images: lossless pixels + metadata gone ----
   def test_images_clean_losslessly_without_false_clean
-    skip 'ImageMagick (convert) not installed' unless have?('convert')
+    unless have?('convert') || (have?('ffmpeg') && have?('cwebp'))
+      skip 'no image generator (ImageMagick or ffmpeg+cwebp) installed'
+    end
 
     tested = []
-    %w[jpg png gif bmp tiff webp].each do |ext|
+    formats = %w[jpg png gif bmp tiff webp]
+    formats.each do |ext|
       Dir.mktmpdir do |d|
         f = File.join(d, "x.#{ext}")
         next unless gen_image(f)
 
         tested << ext
+        assert still_leaks?(f), "#{ext}: metadata marker was not written" unless UNTAGGABLE_IMAGES.include?(ext)
         before = pixels(f)
         assert_clean(ext, f)
         assert_equal before, pixels(f), "#{ext}: pixels changed — clean was not lossless" if before
       end
     end
-    refute_empty tested, 'no image formats could be generated (ImageMagick delegates missing?)'
+    assert_equal formats, tested, 'every listed image format must be generated and tested'
   end
 
-  # ---- audio: stream-identical + metadata gone ----
   def test_audio_clean_losslessly_without_false_clean
     tested = []
-    %w[mp3 flac ogg opus wav m4a].each do |ext|
+    formats = %w[mp3 flac ogg opus wav aiff m4a]
+    formats.each do |ext|
       Dir.mktmpdir do |d|
         f = File.join(d, "x.#{ext}")
         next unless gen_audio(f)
 
         tested << ext
+        assert still_leaks?(f), "#{ext}: precondition — metadata marker was not written"
         before = stream_hash(f, '0:a', 'md5')
         assert_clean(ext, f)
         assert_equal before, stream_hash(f, '0:a', 'md5'), "#{ext}: audio stream changed — not lossless" if before
       end
     end
-    refute_empty tested, 'no audio formats could be generated (ffmpeg encoders missing?)'
+    assert_equal formats, tested, 'every listed audio format must be generated and tested'
   end
 
-  # ---- video (incl. wmv via mat2, mkv/webm via ffmpeg): stream-identical ----
   def test_video_clean_losslessly_without_false_clean
     tested = []
-    %w[mp4 mov avi mkv webm wmv].each do |ext|
+    formats = %w[mp4 mov avi mkv webm wmv]
+    formats.each do |ext|
       Dir.mktmpdir do |d|
         f = File.join(d, "x.#{ext}")
         next unless gen_video(f, ext)
 
         tested << ext
+        assert still_leaks?(f), "#{ext}: precondition — metadata marker was not written"
         before = stream_hash(f, '0:v', 'framemd5')
         assert_clean(ext, f)
         assert_equal before, stream_hash(f, '0:v', 'framemd5'), "#{ext}: video stream changed — not lossless" if before
       end
     end
-    refute_empty tested, 'no video formats could be generated'
+    assert_equal formats, tested, 'every listed video format must be generated and tested'
   end
 
-  # ---- pdf: exiftool strips the Info dict, qpdf rebuilds ----
   def test_pdf_cleans_without_false_clean
     Dir.mktmpdir do |d|
       f = File.join(d, 'doc.pdf')
       skip 'no PDF generator (gs/convert) available or PDF coder disabled' unless gen_pdf(f)
 
+      assert still_leaks?(f), 'pdf: precondition — metadata marker was not written'
       assert_clean('pdf', f)
     end
   end
 
-  # ---- archives: zip + epub ----
   def test_archives_clean_without_false_clean
     skip 'zip not installed' unless have?('zip')
 
@@ -110,31 +99,46 @@ class FormatMatrixTest < Minitest::Test
         refute zip_part_has_marker?(epub, 'content.opf'),
                'epub: dc:creator marker survived a :cleaned report (false-clean)'
       end
+
+      if have?('tar')
+        tar = File.join(d, 'nested.tar')
+        assert gen_tar(tar), 'could not build a tar sample'
+        original = File.binread(tar)
+        status = clean_status(tar)
+        if status == :cleaned
+          refute tar_member_has_marker?(tar), 'tar: nested JPEG metadata survived'
+        else
+          assert_equal original, File.binread(tar), 'failed tar clean must leave the original untouched'
+        end
+      end
+
+      torrent = File.join(d, 'sample.torrent')
+      gen_torrent(torrent)
+      assert still_leaks?(torrent), 'torrent: precondition — metadata marker must be present'
+      assert_equal :cleaned, clean_status(torrent), 'torrent should clean'
+      refute still_leaks?(torrent), 'torrent creator/comment survived'
     end
   end
 
-  # ---- office / opendocument (needs LibreOffice; soffice-optional) ----
   def test_office_documents_clean_without_false_clean
-    skip 'soffice (LibreOffice) not installed' unless have?('soffice')
+    skip 'zip not installed' unless have?('zip')
 
     tested = []
-    { 'docx' => :text, 'odt' => :text, 'xlsx' => :sheet, 'ods' => :sheet }.each do |ext, kind|
+    formats = %w[docx xlsx pptx odt ods odp odg odf]
+    formats.each do |ext|
       Dir.mktmpdir do |d|
-        f = gen_office(d, ext, kind)
+        f = gen_office(d, ext)
         next unless f
 
         tested << ext
-        # soffice embeds its own identifying metadata (Application=LibreOffice…,
-        # creation date); prove it's present before and gone after.
-        assert office_metadata?(f), "#{ext}: precondition — soffice metadata should be present"
+        assert office_metadata?(f), "#{ext}: precondition — identifying metadata should be present"
         assert_equal :cleaned, clean_status(f), "#{ext} should clean"
         refute office_metadata?(f), "#{ext}: document metadata survived a :cleaned report (false-clean)"
       end
     end
-    refute_empty tested, 'no office formats could be generated by soffice'
+    assert_equal formats, tested, 'every listed Office format must be generated and tested'
   end
 
-  # ---- svg: must FAIL CLOSED (or clean), but NEVER leak / corrupt ----
   def test_svg_fails_closed_never_leaks
     Dir.mktmpdir do |d|
       f = File.join(d, 'x.svg')
@@ -148,7 +152,6 @@ class FormatMatrixTest < Minitest::Test
       if status == :cleaned
         refute still_leaks?(f), 'svg reported :cleaned but the dc:creator marker survived'
       else
-        # The documented case on a mat2 build that crashes on SVG: fail closed.
         assert_equal original, File.read(f), 'a failed svg clean must leave the original untouched'
       end
     end
@@ -156,8 +159,6 @@ class FormatMatrixTest < Minitest::Test
 
   private
 
-  # The shared guarantee for a format we expect to clean: it reaches :cleaned AND
-  # no exiftool-readable privacy marker survives.
   def assert_clean(ext, path)
     assert_equal :cleaned, clean_status(path), "#{ext}: expected :cleaned"
     refute still_leaks?(path), "#{ext}: FALSE-CLEAN — a metadata marker survived a :cleaned report"
@@ -175,7 +176,6 @@ class FormatMatrixTest < Minitest::Test
     false
   end
 
-  # --- tool/generator helpers ---
   def have?(cmd)
     ENV['PATH'].to_s.split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, cmd)) }
   end
@@ -189,7 +189,12 @@ class FormatMatrixTest < Minitest::Test
   end
 
   def pixels(path)
-    out = IO.popen(['convert', path, '-depth', '8', 'RGBA:-'], 'rb', err: File::NULL, &:read)
+    command = if have?('convert')
+                ['convert', path, '-depth', '8', 'RGBA:-']
+              else
+                ['ffmpeg', '-v', 'error', '-i', path, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-']
+              end
+    out = IO.popen(command, 'rb', err: File::NULL, &:read)
     out && !out.empty? ? Digest::MD5.hexdigest(out) : nil
   rescue StandardError
     nil
@@ -202,16 +207,26 @@ class FormatMatrixTest < Minitest::Test
     nil
   end
 
-  # Generators return the path (truthy) on success, nil otherwise — so callers
-  # can `next unless gen_…` without the method reading as a boolean predicate.
   def gen_image(path)
-    return unless sh('convert', '-size', '32x32', 'gradient:red-blue', path) && made?(path)
+    generated = if have?('convert')
+                  sh('convert', '-size', '32x32', 'gradient:red-blue', path)
+                elsif File.extname(path) == '.webp'
+                  ppm = "#{path}.ppm"
+                  ok = sh('ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=s=32x32:d=0.1',
+                          '-frames:v', '1', ppm)
+                  ok && sh('cwebp', '-quiet', ppm, '-o', path)
+                else
+                  sh('ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=s=32x32:d=0.1',
+                     '-frames:v', '1', path)
+                end
+    return unless generated && made?(path)
 
-    # EXIF Artist for the raster formats that store it, XMP-dc:Creator for the rest.
-    sh('exiftool', '-q', '-overwrite_original', "-Artist=#{MARKER}", "-XMP-dc:Creator=#{MARKER}",
-       "-Comment=#{MARKER}", '-GPSLatitude=59.9', '-GPSLatitudeRef=N',
-       '-GPSLongitude=10.7', '-GPSLongitudeRef=E', path)
-    path
+    tagged = sh('exiftool', '-q', '-overwrite_original', "-Artist=#{MARKER}", "-XMP-dc:Creator=#{MARKER}",
+                "-Comment=#{MARKER}", '-GPSLatitude=59.9', '-GPSLatitudeRef=N',
+                '-GPSLongitude=10.7', '-GPSLongitudeRef=E', path)
+    return path if UNTAGGABLE_IMAGES.include?(Metaclean.ext_of(path))
+
+    path if tagged && still_leaks?(path)
   end
 
   def gen_audio(path)
@@ -250,9 +265,6 @@ class FormatMatrixTest < Minitest::Test
     end
     return unless made?(path)
 
-    # Set a ZIP archive comment carrying the marker (exiftool surfaces it as
-    # File:Comment). Without identifying metadata to strip, the "should clean"
-    # check below would pass vacuously — the marker is what makes it real.
     IO.popen(['zip', '-z', path], 'w', out: File::NULL, err: File::NULL) { |io| io.puts MARKER }
     path if made?(path)
   end
@@ -282,21 +294,133 @@ class FormatMatrixTest < Minitest::Test
     path if made?(path)
   end
 
-  def gen_office(dir, ext, kind)
-    src = File.join(dir, kind == :sheet ? 'src.csv' : 'src.txt')
-    File.write(src, kind == :sheet ? "a,b,c\n1,2,3\n" : "Hello world document.\n")
-    sh('soffice', '--headless', "-env:UserInstallation=file://#{dir}/lo",
-       '--convert-to', ext, '--outdir', dir, src)
-    out = File.join(dir, "src.#{ext}")
+  def gen_tar(path)
+    Dir.mktmpdir do |dir|
+      image = File.join(dir, 'private.jpg')
+      File.binwrite(image, TINY_JPEG.unpack1('m0'))
+      sh('exiftool', '-q', '-overwrite_original', "-Artist=#{MARKER}",
+         "-GPSLatitude=59.9", '-GPSLatitudeRef=N',
+         '-GPSLongitude=10.7', '-GPSLongitudeRef=E', image)
+      sh('tar', '-cf', path, '-C', dir, 'private.jpg')
+    end
+    path if made?(path)
+  end
+
+  def gen_torrent(path)
+    info = 'd6:lengthi1e4:name5:x.txt12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae'
+    data = "d8:announce14:https://x.test10:created by#{MARKER.bytesize}:#{MARKER}" \
+           "7:comment#{MARKER.bytesize}:#{MARKER}4:info#{info}e"
+    File.binwrite(path, data)
+  end
+
+  def gen_office(dir, ext)
+    %w[docx xlsx pptx].include?(ext) ? gen_ooxml(dir, ext) : gen_opendocument(dir, ext)
+  end
+
+  def gen_ooxml(dir, ext)
+    root = File.join(dir, 'package')
+    part, content_type, body = ooxml_main_part(ext)
+    FileUtils.mkdir_p(File.join(root, File.dirname(part)))
+    FileUtils.mkdir_p(File.join(root, '_rels'))
+    FileUtils.mkdir_p(File.join(root, 'docProps'))
+    File.write(File.join(root, part), body)
+    File.write(File.join(root, '[Content_Types].xml'), ooxml_content_types(part, content_type))
+    File.write(File.join(root, '_rels', '.rels'), ooxml_relationships(part))
+    File.write(File.join(root, 'docProps', 'core.xml'), ooxml_core_properties)
+    out = File.join(dir, "sample.#{ext}")
+    Dir.chdir(root) { sh('zip', '-Xrq', out, '.') }
     made?(out) ? out : nil
   end
 
-  # Does a zip-based document still carry identifying metadata (the LibreOffice
-  # generator string, or a Dublin Core / OOXML property block)?
+  def ooxml_main_part(ext)
+    case ext
+    when 'docx'
+      ['word/document.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml',
+       '<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' \
+       '<w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p></w:body></w:document>']
+    when 'xlsx'
+      ['xl/workbook.xml', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml',
+       '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets/></workbook>']
+    when 'pptx'
+      ['ppt/presentation.xml', 'application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml',
+       '<?xml version="1.0"?><p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">' \
+       '<p:sldIdLst/></p:presentation>']
+    end
+  end
+
+  def ooxml_content_types(part, content_type)
+    %(<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">) \
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' \
+      '<Default Extension="xml" ContentType="application/xml"/>' \
+      "<Override PartName=\"/#{part}\" ContentType=\"#{content_type}\"/>" \
+      '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>' \
+      '</Types>'
+  end
+
+  def ooxml_relationships(part)
+    %(<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">) \
+      "<Relationship Id=\"r1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" " \
+      "Target=\"#{part}\"/>" \
+      '<Relationship Id="r2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" ' \
+      'Target="docProps/core.xml"/></Relationships>'
+  end
+
+  def ooxml_core_properties
+    %(<?xml version="1.0"?><cp:coreProperties ) \
+      'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ' \
+      'xmlns:dc="http://purl.org/dc/elements/1.1/">' \
+      "<dc:title>#{MARKER}</dc:title><dc:creator>#{MARKER}</dc:creator></cp:coreProperties>"
+  end
+
+  def gen_opendocument(dir, ext)
+    mime = {
+      'odt' => 'text', 'ods' => 'spreadsheet', 'odp' => 'presentation',
+      'odg' => 'graphics', 'odf' => 'formula'
+    }.fetch(ext)
+    root = File.join(dir, 'package')
+    FileUtils.mkdir_p(File.join(root, 'META-INF'))
+    File.write(File.join(root, 'mimetype'), "application/vnd.oasis.opendocument.#{mime}")
+    File.write(File.join(root, 'content.xml'), odf_content)
+    File.write(File.join(root, 'meta.xml'), odf_metadata)
+    File.write(File.join(root, 'META-INF', 'manifest.xml'), odf_manifest(mime))
+    out = File.join(dir, "sample.#{ext}")
+    Dir.chdir(root) do
+      sh('zip', '-X0q', out, 'mimetype')
+      sh('zip', '-Xrq', out, 'META-INF', 'content.xml', 'meta.xml')
+    end
+    made?(out) ? out : nil
+  end
+
+  def odf_content
+    '<?xml version="1.0"?><office:document-content ' \
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' \
+      'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">' \
+      '<office:body><office:text><text:p>Hello</text:p></office:text></office:body></office:document-content>'
+  end
+
+  def odf_metadata
+    '<?xml version="1.0"?><office:document-meta ' \
+      'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' \
+      'xmlns:dc="http://purl.org/dc/elements/1.1/" ' \
+      'xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0">' \
+      "<office:meta><dc:title>#{MARKER}</dc:title><meta:initial-creator>#{MARKER}</meta:initial-creator>" \
+      '</office:meta></office:document-meta>'
+  end
+
+  def odf_manifest(mime)
+    '<?xml version="1.0"?><manifest:manifest ' \
+      'xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">' \
+      "<manifest:file-entry manifest:full-path=\"/\" " \
+      "manifest:media-type=\"application/vnd.oasis.opendocument.#{mime}\"/>" \
+      '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>' \
+      '<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>' \
+      '</manifest:manifest>'
+  end
+
   def office_metadata?(path)
     parts = IO.popen(['unzip', '-p', path, 'docProps/core.xml', 'docProps/app.xml', 'meta.xml'],
                      'rb', err: File::NULL, &:read).to_s
-    parts.match?(/LibreOffice|dcterms|meta:generation|meta:creation-date|dc:date/)
+    parts.include?(MARKER) || parts.match?(/LibreOffice|dcterms|meta:generation|meta:creation-date|dc:date/)
   rescue StandardError
     false
   end
@@ -306,5 +430,13 @@ class FormatMatrixTest < Minitest::Test
     out.include?(MARKER)
   rescue StandardError
     false
+  end
+
+  def tar_member_has_marker?(path)
+    Dir.mktmpdir do |dir|
+      return true unless sh('tar', '-xf', path, '-C', dir)
+
+      return still_leaks?(File.join(dir, 'private.jpg'))
+    end
   end
 end

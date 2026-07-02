@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-# CLI argument parser. Uses stdlib OptionParser (zero deps) over a gem like Thor.
-
 require 'optparse'
 
 module Metaclean
@@ -17,23 +15,18 @@ module Metaclean
         in_place:     false,
         force:        false,
         inspect_only: false,
-        dry_run:      false
+        dry_run:      false,
+        quiet:        false,
+        allow_icc_metadata: false,
+        redact_values: !$stdout.tty?
       }
       @paths = []
     end
 
-    # Top-level dispatcher. Catches our errors and exits with codes that
-    # shells/CI can act on:
-    #   0  → success
-    #   1  → general failure
-    #   2  → a required tool (exiftool/mat2/qpdf/ffmpeg) is missing (install hint shown)
-    #   130→ user pressed Ctrl-C (matches the standard SIGINT exit code)
     def run
       parse!
-      # Refuse to run unless all four external tools are present (see
-      # Metaclean.ensure_tools!). --help/--version already exited inside parse!,
-      # so this only gates an actual inspect/clean.
-      Metaclean.ensure_tools!
+      Display.configure(quiet: @options[:quiet], redact_values: @options[:redact_values])
+      Metaclean.ensure_tools!(in_place: @options[:in_place])
       runner = Runner.new(@options)
       if @options[:inspect_only]
         runner.inspect_paths(@paths)
@@ -45,13 +38,9 @@ module Metaclean
       warn e.message
       exit 2
     rescue Error, SystemCallError => e
-      # Errno::* (disk full, permission denied, read-only fs) is a SIBLING of
-      # our Error, not a subclass; naming it here gives filesystem failures a
-      # clean message + exit 1 instead of a raw backtrace.
       warn Display.error(e.message)
       exit 1
     rescue Interrupt
-      # Print a clean message instead of a stack trace.
       warn "\n#{Display.error('Interrupted.')}"
       exit 130
     end
@@ -59,7 +48,36 @@ module Metaclean
     private
 
     def parse!
-      parser = OptionParser.new do |o|
+      parser = option_parser
+
+      begin
+        parser.parse!(@argv)
+      rescue OptionParser::ParseError => e
+        warn Display.error(e.message)
+        warn parser
+        exit 1
+      end
+
+      if @argv.empty?
+        Display.banner
+        puts parser
+        exit 1
+      end
+
+      incompatible = []
+      incompatible << '--dry-run' if @options[:dry_run]
+      incompatible << '--in-place' if @options[:in_place]
+      incompatible << '--force' if @options[:force]
+      if @options[:inspect_only] && incompatible.any?
+        warn Display.error("--inspect cannot be combined with #{incompatible.join(', ')}")
+        exit 1
+      end
+
+      @paths = @argv.dup
+    end
+
+    def option_parser
+      OptionParser.new do |o|
         o.banner = 'Usage: metaclean [options] <path> [<path>...]'
         o.separator ''
         o.separator 'Metadata cleaner. Strips EXIF, IPTC, XMP, GPS,'
@@ -69,13 +87,20 @@ module Metaclean
 
         o.separator 'Modes:'
         o.on('--inspect', 'Only show metadata, do not modify files')     { @options[:inspect_only] = true }
-        o.on('--dry-run', 'Simulate cleaning, show diff, write nothing') { @options[:dry_run] = true }
+        o.on('--dry-run', 'Simulate on a private temporary copy; keep no output') { @options[:dry_run] = true }
 
         o.separator ''
         o.separator 'Output:'
         o.on('-i', '--in-place', 'Overwrite originals (keeps a .bak; default: *_clean.<ext>)') { @options[:in_place] = true }
         o.on('-r', '--recursive', 'Recurse into directories') { @options[:recursive] = true }
         o.on('-f', '--force',     'Skip confirmation prompt')  { @options[:force] = true }
+        o.on('-q', '--quiet',     'Suppress normal output; errors and warnings remain') { @options[:quiet] = true }
+        o.on('--redact-values',   'Hide metadata values in tables and diffs') { @options[:redact_values] = true }
+        o.on('--show-values',     'Show metadata values even when output is redirected') { @options[:redact_values] = false }
+        o.on('--allow-icc-metadata',
+             'Keep non-standard ICC profile text (standard color spaces clean anyway)') do
+          @options[:allow_icc_metadata] = true
+        end
 
         o.separator ''
         o.separator 'Other:'
@@ -83,37 +108,15 @@ module Metaclean
         o.on('-v', '--version') do
           Display.banner
           puts "metaclean #{Metaclean::VERSION}"
-          # Route tool versions (from the binaries' own stdout) through printable,
-          # like every other output path, so a tool emitting ANSI/OSC control
-          # bytes on its version line can't inject the terminal.
           puts "  exiftool: #{Display.printable(Exiftool.version || 'not found')}"
           puts "  mat2:     #{Display.printable(Mat2.version     || 'not found')}"
           puts "  qpdf:     #{Display.printable(Qpdf.version     || 'not found')}"
           puts "  ffmpeg:   #{Display.printable(Ffmpeg.version   || 'not found')}"
           exit
         end
+        o.separator ''
+        o.separator 'Use -- before a filename that begins with "-".'
       end
-
-      begin
-        parser.parse!(@argv)
-      rescue OptionParser::ParseError => e
-        # Any malformed flag — unknown, missing argument, or an ambiguous
-        # abbreviation like `--i` (matches both --inspect and --in-place) —
-        # shows the message + help and exits non-zero, never a raw backtrace.
-        # ParseError is the base class of all of OptionParser's error types.
-        warn Display.error(e.message)
-        warn parser
-        exit 1
-      end
-
-      # No paths: show help, exit non-zero so scripts notice.
-      if @argv.empty?
-        Display.banner
-        puts parser
-        exit 1
-      end
-
-      @paths = @argv.dup
     end
   end
 end

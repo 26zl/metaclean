@@ -22,6 +22,8 @@ declared by the Gemfile:
 ```bash
 bundle exec rake test     # the full suite
 bundle exec rubocop       # lint (must be clean)
+bundle exec bundler-audit check --update
+bundle exec ruby -Itest test/coverage_runner.rb
 ```
 
 The pure unit tests run without any external tools. The integration tests in
@@ -29,23 +31,29 @@ The pure unit tests run without any external tools. The integration tests in
 `ffmpeg` are on your `PATH`; install them (see the README) to exercise the real
 strip/verify flow locally. CI installs all four on Linux.
 
-### The "every format" matrix
+### The real-file format matrix
 
-`test/test_format_matrix.rb` generates a real sample of **every** format
-metaclean routes (images, audio, video, PDF, archives, Office/OpenDocument),
-cleans it, and asserts the core guarantee — a file reported `:cleaned` never
-keeps its metadata (no false-clean), media stays byte-identical, and a format no
-tool can clean (e.g. SVG on a mat2 build that crashes on it) fails *closed*. It
-is **opt-in** (it also needs file generators and is slower), so set an env var:
+`test/test_format_matrix.rb` exercises every major routing family with real
+files. Focused integration tests cover DNG identity tags, HTML and structured
+Matroska files. Together they assert that a verified clean loses identifying
+metadata while functional image/container structure remains intact. The matrix
+is **opt-in** because it needs extra generators:
 
 ```bash
 METACLEAN_FORMAT_MATRIX=1 bundle exec ruby -Itest test/test_format_matrix.rb
 ```
 
-It needs the four cleaning tools plus `convert` (ImageMagick), `ffmpeg`,
-`ghostscript`, `zip`/`unzip`, and — for the Office formats — `soffice`
-(LibreOffice). Any format whose generator is missing auto-skips. The dedicated
+It needs the four cleaning tools plus `ghostscript`, `zip`/`unzip`, and either
+`convert` (ImageMagick) or `cwebp` together with ffmpeg for image generation.
+Any unavailable generator is reported as a skipped family. The dedicated
 `format-matrix` CI job runs the whole thing on every push.
+
+Changes to container handling must include a nested-payload fixture. In
+particular, PDF/Matroska attachments and cover art may not be reported clean
+unless their payload metadata is independently verified.
+
+Release candidates are also checked manually on genuine DNG/HEIC samples,
+Termux and non-POSIX filesystems.
 
 ## Pull requests
 

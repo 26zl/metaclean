@@ -1,15 +1,6 @@
 # frozen_string_literal: true
 
-# Wrapper around `qpdf` — a PDF structural cleaner.
-#
-# Why qpdf on top of mat2/ExifTool? PDFs hide metadata in places those two
-# don't always reach: orphaned objects, unused image streams, old revisions.
-# qpdf rebuilds the PDF using only referenced objects — a final pass after the
-# other tools have stripped the obvious metadata.
-
-require 'open3'
-require 'fileutils'
-require 'securerandom'
+require 'json'
 
 module Metaclean
   module Qpdf
@@ -18,15 +9,15 @@ module Metaclean
     def available?
       return @available if defined?(@available)
 
-      out, _err, status = Open3.capture3('qpdf', '--version')
+      out, _err, status = Metaclean.capture3(
+        'qpdf', '--version',
+        timeout: Metaclean::PROBE_TIMEOUT,
+        max_output: Metaclean::PROBE_MAX_OUTPUT_BYTES
+      )
       @available = status.success?
-      # `qpdf --version` prints "qpdf version 11.9.0" on its first line. We
-      # keep just the bare number (`.split.last`) so callers don't each have
-      # to post-process it — matching Exiftool.version / Mat2.version. Captured
-      # here so `version` reuses it instead of re-spawning the binary.
       @version = @available ? out.lines.first.to_s.strip.split.last : nil
       @available
-    rescue Errno::ENOENT
+    rescue Errno::ENOENT, Error
       @version = nil
       @available = false
     end
@@ -35,45 +26,54 @@ module Metaclean
       available? ? @version : nil
     end
 
-    # Rebuilds a PDF in place. The qpdf flags here:
-    #   --linearize                          → optimize for streaming/web
-    #   --object-streams=generate            → bundle objects efficiently
-    #   --remove-unreferenced-resources=yes  → drop unused content (the
-    #                                           privacy-relevant part!)
-    #
-    # qpdf can't write back to the same file, so we use the standard
-    # "atomic write" pattern: write to a temp file, then rename it on top of
-    # the original. `File.rename` (used internally by `FileUtils.mv` for
-    # same-filesystem moves) is atomic on POSIX — either the swap completes
-    # or nothing changes. No "half-written" state is ever visible.
     def rebuild!(path)
       raise Error, 'qpdf not available' unless available?
 
-      src = Metaclean.safe_path(path)
-      tmp = tmp_path_for(path)
+      source = FileOps.regular_stat!(path)
+      ensure_no_attachments!(path)
+      FileOps.with_private_workspace(path, 'qpdf') do |workspace|
+        tmp = File.join(workspace, 'output.pdf')
+        _out, err, status = Metaclean.capture3(
+          'qpdf', '--linearize', '--object-streams=generate',
+          '--remove-unreferenced-resources=yes',
+          Metaclean.safe_path(path), Metaclean.safe_path(tmp)
+        )
 
-      _out, err, status = Metaclean.capture3(
-        'qpdf', '--linearize', '--object-streams=generate',
-        '--remove-unreferenced-resources=yes', src, Metaclean.safe_path(tmp)
-      )
+        success = status.success? || status.exitstatus == 3
+        raise Error, "qpdf failed: #{err.strip}" unless success && File.exist?(tmp)
 
-      # qpdf has a quirk: exit code 3 means "succeeded with warnings" (output
-      # is still produced and valid). We treat that the same as success.
-      success = status.success? || status.exitstatus == 3
-      raise Error, "qpdf failed: #{err.strip}" unless success && File.exist?(tmp)
-
-      FileUtils.mv(tmp, src)
-      true
-    ensure
-      # Interrupt-safety: drop the temp if we died (or failed) before the
-      # rename. On success it's already moved, so this is a no-op.
-      File.delete(tmp) if tmp && File.exist?(tmp)
+        FileOps.validate_output!(tmp)
+        validate_pdf!(tmp)
+        FileOps.ensure_same_file!(path, source)
+        FileOps.restore_metadata(tmp, source)
+        File.rename(tmp, path)
+        true
+      end
     end
 
-    # Short sibling temp in the same directory: same-fs rename, unpredictable
-    # name, and no risk of exceeding filename length by appending to a long PDF.
-    def tmp_path_for(path)
-      File.join(File.dirname(path), "#{Metaclean::TMP_MARKER}qpdf.#{Process.pid}.#{SecureRandom.hex(8)}.pdf")
+    def ensure_no_attachments!(path)
+      out, err, status = Metaclean.capture3(
+        'qpdf', '--json', '--json-key=attachments', Metaclean.safe_path(path)
+      )
+      success = status.success? || status.exitstatus == 3
+      raise Error, "qpdf could not inspect PDF attachments: #{err.strip}" unless success
+
+      attachments = JSON.parse(out).fetch('attachments')
+      raise Error, 'Unexpected qpdf attachment inventory' unless attachments.is_a?(Hash)
+      return if attachments.empty?
+
+      raise Error, 'PDF contains embedded attachments whose nested metadata cannot be verified'
+    rescue JSON::ParserError, KeyError => e
+      raise Error, "Could not parse qpdf attachment inventory: #{e.message}"
+    end
+
+    def validate_pdf!(path)
+      _out, err, status = Metaclean.capture3(
+        'qpdf', '--check', Metaclean.safe_path(path)
+      )
+      return true if status.success? || status.exitstatus == 3
+
+      raise Error, "qpdf produced an invalid PDF: #{err.strip}"
     end
   end
 end

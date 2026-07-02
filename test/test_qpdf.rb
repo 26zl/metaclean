@@ -2,15 +2,8 @@
 
 require_relative 'test_helper'
 
-# Qpdf.rebuild! is the PDF structural pass (drops orphaned objects/old
-# revisions). Pin the exit-code handling — especially the exit-3 "success with
-# warnings" quirk — and the atomic temp rename / cleanup, by stubbing the
-# shell-out with a fake Process::Status.
 class QpdfTest < Minitest::Test
   def qpdf_temps(dir)
-    # Match the SHARED marker the production code actually writes
-    # (".metaclean.tmp.qpdf…"); the old literal ".metaclean.qpdf.tmp." matched
-    # nothing, so a leftover-temp regression would have slipped through.
     Dir.children(dir).grep(/#{Regexp.escape(Metaclean::TMP_MARKER)}/)
   end
 
@@ -25,7 +18,14 @@ class QpdfTest < Minitest::Test
     Dir.mktmpdir do |d|
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
-      writer = ->(*a) { File.write(a.last, 'REBUILT'); ['', '', status(true, 0)] }
+      writer = lambda do |*args|
+        if args.include?('--json-key=attachments')
+          ['{"attachments":{}}', '', status(true, 0)]
+        else
+          File.write(args.last, 'REBUILT') unless args.include?('--check')
+          ['', '', status(true, 0)]
+        end
+      end
       Metaclean::Qpdf.stub(:available?, true) do
         Metaclean.stub(:capture3, writer) do
           assert_equal true, Metaclean::Qpdf.rebuild!(f)
@@ -36,12 +36,18 @@ class QpdfTest < Minitest::Test
     end
   end
 
-  # qpdf exit 3 = "success with warnings" — output is valid, must count as success.
   def test_exit_three_is_treated_as_success
     Dir.mktmpdir do |d|
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
-      writer = ->(*a) { File.write(a.last, 'REBUILT'); ['', 'warning', status(false, 3)] }
+      writer = lambda do |*args|
+        if args.include?('--json-key=attachments')
+          ['{"attachments":{}}', '', status(true, 0)]
+        else
+          File.write(args.last, 'REBUILT') unless args.include?('--check')
+          ['', 'warning', status(false, 3)]
+        end
+      end
       Metaclean::Qpdf.stub(:available?, true) do
         Metaclean.stub(:capture3, writer) do
           assert_equal true, Metaclean::Qpdf.rebuild!(f)
@@ -51,14 +57,15 @@ class QpdfTest < Minitest::Test
     end
   end
 
-  # A real failure (exit 2) raises and leaves the original intact with no temp.
   def test_real_failure_raises_and_leaves_no_temp
     Dir.mktmpdir do |d|
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
       Metaclean::Qpdf.stub(:available?, true) do
-        Metaclean.stub(:capture3, ['', 'fatal', status(false, 2)]) do
-          assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
+        Metaclean::Qpdf.stub(:ensure_no_attachments!, true) do
+          Metaclean.stub(:capture3, ['', 'fatal', status(false, 2)]) do
+            assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
+          end
         end
       end
       assert_equal 'ORIG', File.read(f), 'original untouched on failure'
@@ -66,34 +73,73 @@ class QpdfTest < Minitest::Test
     end
   end
 
-  # qpdf exit 0/3 without an output file is not a usable rebuild. Treat it as
-  # failure so the runner never commits a missing or stale temp.
   def test_success_exit_without_output_raises
     Dir.mktmpdir do |d|
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
       Metaclean::Qpdf.stub(:available?, true) do
-        Metaclean.stub(:capture3, ['', '', status(true, 0)]) do
-          assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
+        Metaclean::Qpdf.stub(:ensure_no_attachments!, true) do
+          Metaclean.stub(:capture3, ['', '', status(true, 0)]) do
+            assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
+          end
         end
       end
       assert_equal 'ORIG', File.read(f)
     end
   end
 
-  # The exit-3 ("success with warnings") branch must ALSO require an output file —
-  # warnings without a produced temp is not a usable rebuild.
   def test_exit_three_without_output_raises
     Dir.mktmpdir do |d|
       f = File.join(d, 'doc.pdf')
       File.write(f, 'ORIG')
       Metaclean::Qpdf.stub(:available?, true) do
-        Metaclean.stub(:capture3, ['', 'warning', status(false, 3)]) do
-          assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
+        Metaclean::Qpdf.stub(:ensure_no_attachments!, true) do
+          Metaclean.stub(:capture3, ['', 'warning', status(false, 3)]) do
+            assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(f) }
+          end
         end
       end
       assert_equal 'ORIG', File.read(f), 'original untouched when exit 3 produced no output'
       assert_empty qpdf_temps(d)
+    end
+  end
+
+  def test_pdf_with_attachments_is_rejected_before_rebuild
+    Dir.mktmpdir do |d|
+      file = File.join(d, 'doc.pdf')
+      File.write(file, 'ORIG')
+      response = ['{"attachments":{"private":{}}}', '', status(true, 0)]
+      Metaclean::Qpdf.stub(:available?, true) do
+        Metaclean.stub(:capture3, response) do
+          error = assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(file) }
+          assert_match(/embedded attachments/, error.message)
+        end
+      end
+      assert_equal 'ORIG', File.read(file)
+    end
+  end
+
+  def test_structurally_invalid_rebuild_is_rejected
+    Dir.mktmpdir do |d|
+      file = File.join(d, 'doc.pdf')
+      File.write(file, 'ORIG')
+      writer = lambda do |*args|
+        if args.include?('--json-key=attachments')
+          ['{"attachments":{}}', '', status(true, 0)]
+        elsif args.include?('--check')
+          ['', 'damaged', status(false, 2)]
+        else
+          File.write(args.last, 'BROKEN')
+          ['', '', status(true, 0)]
+        end
+      end
+      Metaclean::Qpdf.stub(:available?, true) do
+        Metaclean.stub(:capture3, writer) do
+          error = assert_raises(Metaclean::Error) { Metaclean::Qpdf.rebuild!(file) }
+          assert_match(/invalid PDF/, error.message)
+        end
+      end
+      assert_equal 'ORIG', File.read(file)
     end
   end
 end
