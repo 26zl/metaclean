@@ -237,11 +237,11 @@ class IntegrationTest < Minitest::Test
       acl_before = IO.popen(['ls', '-le', file], &:read).lines.drop(1).map(&:strip)
 
       result = nil
-      output, = capture_io do
+      _out, err = capture_io do
         result = Metaclean::Runner.new(in_place: true).send(:clean_one, file, index: 1, total: 1)
       end
       assert_equal :cleaned, result[:status]
-      assert_includes output, "Backup with original metadata: #{file}.bak"
+      assert_includes err, "Backup with original metadata: #{file}.bak"
       value = IO.popen(['/usr/bin/xattr', '-p', 'com.metaclean.test', file], &:read).strip
       assert_equal 'preserve-me', value
       assert_equal acl_before, IO.popen(['ls', '-le', file], &:read).lines.drop(1).map(&:strip)

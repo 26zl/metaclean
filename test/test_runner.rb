@@ -227,7 +227,7 @@ class RunnerTest < Minitest::Test
       src = File.join(d, 'photo.jpg')
       File.write(src, 'original-bytes')
 
-      out, = capture_io do
+      _out, err = capture_io do
         @r.stub(:read_metadata, { 'GPS:GPSLatitude' => 59.9 }) do
           Metaclean::Strategy.stub(:tools_for, [:exiftool]) do
             @r.stub(:run_tool, { tool: :exiftool, ok: true }) do
@@ -242,7 +242,7 @@ class RunnerTest < Minitest::Test
              'a file with a surviving privacy tag must not be written'
       assert_equal 'original-bytes', File.read(src), 'original must be left untouched'
       assert_empty metaclean_temps(d), 'staging temp must be cleaned up'
-      assert_match(/not writing output/, out)
+      assert_match(/not writing output/, err)
     end
   end
 
@@ -251,7 +251,7 @@ class RunnerTest < Minitest::Test
       src = File.join(d, 'archive.zip')
       File.write(src, 'original-bytes')
 
-      out, = capture_io do
+      _out, err = capture_io do
         @r.stub(:read_metadata, { 'File:Comment' => 'secret archive comment' }) do
           Metaclean::Strategy.stub(:tools_for, [:mat2]) do
             @r.stub(:run_tool, { tool: :mat2, ok: true }) do
@@ -264,7 +264,7 @@ class RunnerTest < Minitest::Test
 
       refute File.exist?(File.join(d, 'archive_clean.zip')),
              'a surviving File:Comment must not be written as clean'
-      assert_match(/not writing output/, out)
+      assert_match(/not writing output/, err)
     end
   end
 
@@ -335,7 +335,7 @@ class RunnerTest < Minitest::Test
       src = File.join(d, 'photo.jpg')
       File.write(src, 'original-bytes')
 
-      out, = capture_io do
+      _out, err = capture_io do
         @r.stub(:read_metadata, {}) do
           Metaclean::Strategy.stub(:tools_for, [:mat2]) do
             @r.stub(:run_tool, { tool: :mat2, ok: false, skipped: true }) do
@@ -349,7 +349,7 @@ class RunnerTest < Minitest::Test
       refute File.exist?(File.join(d, 'photo_clean.jpg'))
       assert_equal 'original-bytes', File.read(src), 'original must be left untouched'
       assert_empty metaclean_temps(d)
-      assert_match(/supports this format/i, out)
+      assert_match(/supports this format/i, err)
     end
   end
 
@@ -464,7 +464,7 @@ class RunnerTest < Minitest::Test
       src = File.join(d, 'doc.pdf')
       File.write(src, 'original-bytes')
       run = ->(tool, _p) { tool == :mat2 ? { tool: :mat2, ok: false, error: 'mat2 boom' } : { tool: tool, ok: true } }
-      out, = capture_io do
+      _out, err = capture_io do
         Metaclean::Exiftool.stub(:available?, true) do
           @r.stub(:read_metadata, {}) do
             Metaclean::Strategy.stub(:tools_for, %i[mat2 exiftool qpdf]) do
@@ -476,7 +476,7 @@ class RunnerTest < Minitest::Test
         end
       end
       refute File.exist?(File.join(d, 'doc_clean.pdf'))
-      assert_match(/could not be verified/, out)
+      assert_match(/could not be verified/, err)
     end
   end
 
@@ -805,16 +805,16 @@ class RunnerTest < Minitest::Test
       File.symlink(outside, link)
 
       runner = Metaclean::Runner.new({})
-      output, = capture_io do
+      _out, err = capture_io do
         assert_empty runner.send(:expand_files, [File.join(link, 'secret.jpg')])
       end
-      assert_match(/symlink component/, output)
+      assert_match(/symlink component/, err)
     end
   end
 
   def test_force_in_place_still_warns_about_metadata_backup
     runner = Metaclean::Runner.new(force: true, in_place: true)
-    output, = capture_io do
+    _out, err = capture_io do
       runner.stub(:expand_files, ['photo.jpg']) do
         runner.stub(:announce_tools, nil) do
           runner.stub(:clean_one, { status: :cleaned, removed: 0, residual: 0 }) do
@@ -823,7 +823,25 @@ class RunnerTest < Minitest::Test
         end
       end
     end
-    assert_match(/backup is the ORIGINAL/i, output)
+    assert_match(/backup is the ORIGINAL/i, err)
+  end
+
+  def test_warnings_are_written_to_stderr_not_stdout
+    out, err = capture_io { Metaclean::Display.warning('privacy note') }
+    assert_empty out, 'warnings must not pollute stdout'
+    assert_match(/privacy note/, err)
+  end
+
+  def test_report_residual_hints_at_allow_icc_metadata_only_for_icc_only_residual
+    _out, err = capture_io do
+      @r.send(:report_residual, { 'ICC-header:ProfileDescription' => 'ACME Corp Custom' })
+    end
+    assert_match(/--allow-icc-metadata/, err)
+
+    _out, err = capture_io do
+      @r.send(:report_residual, { 'GPS:GPSLatitude' => 59.9 })
+    end
+    refute_match(/--allow-icc-metadata/, err)
   end
 
   def run_with_stdin(input)

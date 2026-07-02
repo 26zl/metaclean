@@ -24,6 +24,7 @@ Gem::Specification.new do |s|
   s.metadata = {
     'allowed_push_host' => 'https://rubygems.org',
     'bug_tracker_uri' => 'https://github.com/26zl/metaclean/issues',
+    'changelog_uri' => 'https://github.com/26zl/metaclean/releases',
     'documentation_uri' => 'https://github.com/26zl/metaclean#readme',
     'source_code_uri' => 'https://github.com/26zl/metaclean',
     'rubygems_mfa_required' => 'true'

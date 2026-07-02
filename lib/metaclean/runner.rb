@@ -159,8 +159,11 @@ module Metaclean
       Display.warning "Privacy-relevant tags still present (#{residual.size}):"
       unless Display.quiet?
         residual.each do |key, value|
-          puts "    #{Display.c(key, :yellow)} = #{Display.truncate(Display.visible_value(value), 60)}"
+          warn "    #{Display.c(key, :yellow)} = #{Display.truncate(Display.visible_value(value), 60)}"
         end
+      end
+      if residual.keys.all? { |key| key.to_s.start_with?('ICC') }
+        Display.warning 'Only ICC profile text remains — review it and pass --allow-icc-metadata to accept it.'
       end
       residual
     end
@@ -296,7 +299,7 @@ module Metaclean
       if summary[:unsupported].positive?
         Display.warning "Unsupported (not cleaned): #{summary[:unsupported]} file(s)"
       end
-      puts Display.error("Failed:  #{summary[:failed]}") if summary[:failed].positive?
+      warn Display.error("Failed:  #{summary[:failed]}") if summary[:failed].positive?
       Display.info "Total embedded tags removed: #{summary[:removed_total]}"
       if summary[:residual_files].positive?
         Display.warning "Files with privacy residual: #{summary[:residual_files]}"

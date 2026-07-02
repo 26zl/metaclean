@@ -104,8 +104,8 @@ module Metaclean
 
         o.separator ''
         o.separator 'Other:'
-        o.on('-h', '--help')    { Display.banner; puts o; exit }
-        o.on('-v', '--version') do
+        o.on('-h', '--help', 'Show this help and exit') { Display.banner; puts o; exit }
+        o.on('-v', '--version', 'Show metaclean and tool versions, then exit') do
           Display.banner
           puts "metaclean #{Metaclean::VERSION}"
           puts "  exiftool: #{Display.printable(Exiftool.version || 'not found')}"

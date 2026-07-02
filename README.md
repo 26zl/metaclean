@@ -1,6 +1,6 @@
 # metaclean
 
-```
+```text
 ███╗   ███╗███████╗████████╗ █████╗  ██████╗██╗     ███████╗ █████╗ ███╗   ██╗
 ████╗ ████║██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║     ██╔════╝██╔══██╗████╗  ██║
 ██╔████╔██║█████╗     ██║   ███████║██║     ██║     █████╗  ███████║██╔██╗ ██║
@@ -253,6 +253,9 @@ git push origin vX.Y.Z
   unverified candidates all exit non-zero.
 - When stdout is redirected, metadata values are redacted by default. Use
   `--show-values` only when the destination log is trusted.
+- Warnings and errors are written to stderr, so privacy notes (surviving tags,
+  the `.bak` reminder) stay visible even when normal output is piped or sent
+  to a file.
 - External tool versions are recorded in CI and shown by `metaclean --version`.
   Keep OS packages updated; release tests exercise the supported Ruby range and
   capability-check qpdf/ffmpeg output rather than trusting version strings.

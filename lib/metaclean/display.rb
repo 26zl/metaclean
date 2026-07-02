@@ -43,10 +43,13 @@ module Metaclean
     def color?
       return @color if defined?(@color)
 
-      no_color = ENV['NO_COLOR'].to_s
-      @color = $stdout.tty? && no_color.empty?
-      @color = true if ENV['FORCE_COLOR']
-      @color
+      @color = if !ENV['NO_COLOR'].to_s.empty?
+                 false
+               elsif !ENV['FORCE_COLOR'].to_s.empty?
+                 true
+               else
+                 $stdout.tty?
+               end
     end
 
     def c(text, color)
@@ -73,7 +76,7 @@ module Metaclean
     def section(text); puts c("▸ #{text}",  :cyan) unless quiet?;  end
     def info(text);    puts c("  #{text}",  :gray) unless quiet?;  end
     def success(text); puts c("✓ #{text}",  :green) unless quiet?; end
-    def warning(text); puts c("⚠ #{text}",  :yellow);end
+    def warning(text); warn c("⚠ #{text}",  :yellow);end
 
     def error(text); c("✗ #{text}", :red); end
 
