@@ -25,7 +25,6 @@ module Metaclean
 
     def run
       parse!
-      Display.configure(quiet: @options[:quiet], redact_values: @options[:redact_values])
       Metaclean.ensure_tools!(in_place: @options[:in_place])
       runner = Runner.new(@options)
       if @options[:inspect_only]

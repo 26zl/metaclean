@@ -118,7 +118,7 @@ module Metaclean
     missing << 'exiftool' unless Exiftool.available?
     missing << 'mat2'     unless Mat2.available?
     missing << 'qpdf'     unless Qpdf.available?
-    missing << 'ffmpeg'   unless Ffmpeg.available?
+    missing << 'ffmpeg (with ffprobe)' unless Ffmpeg.available?
     missing << 'cp with metadata preservation' if in_place && !FileOps.metadata_copy_supported?
     return if missing.empty?
 

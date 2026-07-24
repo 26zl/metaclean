@@ -46,7 +46,10 @@ clean while such metadata survives is a security issue.
 
 A non-standard ICC profile (one whose description is not a recognized standard
 color space) blocks commit unless the user explicitly accepts its identifying
-fields with `--allow-icc-metadata`; standard color spaces clean without it.
+fields with `--allow-icc-metadata`; standard color spaces clean without it. This
+determination trusts the profile's own `ProfileDescription`: a profile whose
+description matches a recognized color space is treated as non-identifying, so
+its remaining ICC fields are not flagged.
 
 ## Supported versions
 
