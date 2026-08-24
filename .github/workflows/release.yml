@@ -108,4 +108,4 @@ jobs:
 
       - name: Publish to RubyGems via Trusted Publisher
         if: startsWith(github.ref, 'refs/tags/')
-        uses: rubygems/release-gem@052cc82692552de3ef2b81fd670e41d13cba8092 # v1
+        uses: rubygems/release-gem@7f9650160c1a4e7989fdc9855807bdbd421d8b6b # v1
