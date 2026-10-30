@@ -37,7 +37,8 @@ module Metaclean
     end
 
     def path_components(path)
-      expanded = File.expand_path(path)
+      # absolute_path, not expand_path: a name such as ~$report.docx must stay literal.
+      expanded = File.absolute_path(path)
       current = File::SEPARATOR
       expanded.split(File::SEPARATOR).reject(&:empty?).map do |part|
         current = File.join(current, part)
@@ -193,7 +194,7 @@ module Metaclean
     end
 
     def with_private_workspace(path, label)
-      parent = File.dirname(File.expand_path(path))
+      parent = File.dirname(File.absolute_path(path))
       prefix = "#{TMP_MARKER}#{label}.#{Process.pid}."
       Dir.mktmpdir(prefix, parent) do |dir|
         secure_workspace!(dir)

@@ -53,8 +53,8 @@ module Metaclean
 
       unless @options[:force] || @options[:dry_run]
         action = @options[:in_place] ? 'OVERWRITE' : 'create cleaned copies of'
-        puts Display.c("About to #{action} #{files.size} file(s).", :yellow)
-        print Display.c('Proceed? [y/N] ', :bold)
+        warn Display.c("About to #{action} #{files.size} file(s).", :yellow)
+        $stderr.print Display.c('Proceed? [y/N] ', :bold)
         ans = $stdin.gets&.strip&.downcase
         unless %w[y yes].include?(ans)
           Display.warning('Aborted.')

@@ -138,4 +138,20 @@ class FileOpsTest < Minitest::Test
       assert_raises(Metaclean::Error) { F.ensure_path_guard!(file, guard) }
     end
   end
+
+  def test_path_guard_treats_a_leading_tilde_as_a_literal_name
+    Dir.mktmpdir do |dir|
+      Dir.chdir(dir) do
+        File.write('~$report.docx', 'x')
+        guard = F.path_guard!('~$report.docx')
+        assert_equal File.realpath('~$report.docx'), guard[:realpath]
+        component, _dev, ino = guard[:components].last
+        assert_equal File.join(Dir.pwd, '~$report.docx'), component, 'the guard must pin the literal file, not a home directory'
+        assert_equal File.stat('~$report.docx').ino, ino
+        F.with_private_workspace('~$report.docx', 'test') do |workspace|
+          assert_equal Dir.pwd, File.dirname(workspace)
+        end
+      end
+    end
+  end
 end

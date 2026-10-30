@@ -20,9 +20,20 @@ module Metaclean
 
   class ToolsMissing < Error; end
 
+  # Relative names a tool would read as an option (-x) or, in qpdf's case, as an
+  # argument file (@x) are anchored with ./ so they are always taken as paths.
   def self.safe_path(path)
     s = path.to_s
-    s.start_with?('-') ? File.join('.', s) : s
+    s.start_with?('-', '@') ? File.join('.', s) : s
+  end
+
+  # ARGV and Dir entries carry the locale or filesystem encoding, which is US-ASCII or
+  # binary under a C/POSIX locale; interpolating such a string into a UTF-8 message raises
+  # Encoding::CompatibilityError. Re-tag it as UTF-8 without touching the bytes so it
+  # still names the same file.
+  def self.utf8_path(path)
+    s = path.to_s
+    s.encoding == Encoding::UTF_8 ? s : s.dup.force_encoding(Encoding::UTF_8)
   end
 
   COMMAND_TIMEOUT = 120
@@ -80,7 +91,7 @@ module Metaclean
 
   def self.read_capped(io, limit, wait_thr)
     Thread.new do
-      buf = +''
+      buf = ''.b
       over = false
       while (chunk = io.read(READ_CHUNK))
         next if over
@@ -92,7 +103,9 @@ module Metaclean
         buf = buf.byteslice(0, limit)
         kill_group(wait_thr)
       end
-      [buf, over]
+      # Tool output is only parsed or shown, so make it valid UTF-8 up front: a stray
+      # non-ASCII byte must not break a regexp match or an interpolated message later.
+      [buf.force_encoding(Encoding::UTF_8).scrub, over]
     end
   end
 

@@ -124,7 +124,7 @@ module Metaclean
     end
 
     def file_url(path)
-      "file:#{File.expand_path(path)}"
+      "file:#{File.absolute_path(path)}"
     end
   end
 end

@@ -3,6 +3,7 @@
 require_relative 'test_helper'
 require 'json'
 require 'digest'
+require 'open3'
 
 class IntegrationTest < Minitest::Test
   TINY_JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAAQABABAREA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AKpgP//Z'
@@ -323,7 +324,49 @@ class IntegrationTest < Minitest::Test
     end
   end
 
+  def test_tool_error_naming_a_non_ascii_path_is_reported_not_raised
+    skip 'exiftool not installed' unless Metaclean::Exiftool.available?
+
+    Dir.mktmpdir do |d|
+      dir = File.join(d, 'Zürich')
+      Dir.mkdir(dir)
+      file = File.join(dir, 'mislabeled.png')
+      File.binwrite(file, TINY_JPEG.unpack1('m0')) # JPEG bytes behind a .png name: exiftool refuses to write it
+
+      result = nil
+      _out, err = capture_io { result = Metaclean::Runner.new({}).send(:clean_one, file, index: 1, total: 1) }
+      assert_equal :failed, result[:status]
+      assert_match(/✗ \w+: .*— continuing/, err, 'a tool error that quotes the path is reported, not raised')
+      refute File.exist?(File.join(dir, 'mislabeled_clean.png'))
+    end
+  end
+
+  def test_cli_handles_non_ascii_file_names_under_a_posix_locale
+    skip 'exiftool/mat2/qpdf/ffmpeg not installed' unless all_tools_available?
+
+    Dir.mktmpdir do |d|
+      file = File.join(d, 'café.jpg')
+      File.binwrite(file, TINY_JPEG.unpack1('m0'))
+      system('exiftool', '-q', '-overwrite_original', '-Artist=José', file, exception: true)
+      env = { 'LC_ALL' => 'C', 'LANG' => 'C', 'LANGUAGE' => nil }
+      bin = File.expand_path('../bin/metaclean', __dir__)
+
+      out, err, status = Open3.capture3(env, RbConfig.ruby, bin, '--inspect', file)
+      assert status.success?, err
+      assert_match(/Artist/, out)
+
+      out, err, status = Open3.capture3(env, RbConfig.ruby, bin, '--dry-run', d)
+      assert status.success?, err
+      assert_match(/dry-run/, out)
+      assert_match(/Cleaned: 1 file/, out)
+    end
+  end
+
   private
+
+  def all_tools_available?
+    [Metaclean::Exiftool, Metaclean::Mat2, Metaclean::Qpdf, Metaclean::Ffmpeg].all?(&:available?)
+  end
 
   def decoded_video_hash(path)
     output = IO.popen(

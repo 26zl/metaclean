@@ -16,7 +16,7 @@ module Metaclean
       explicit = []
       discovered = []
       paths.each do |path|
-        collect_path(path, explicit, discovered)
+        collect_path(Metaclean.utf8_path(path), explicit, discovered)
       end
       discovered.reject! { |file| skip?(file) }
       result = dedupe_by_realpath(explicit + discovered)
@@ -82,7 +82,7 @@ module Metaclean
         Dir.children(dir).each do |entry|
           next if entry.start_with?('.')
 
-          path = File.join(dir, entry)
+          path = File.join(dir, Metaclean.utf8_path(entry))
           next if File.symlink?(path)
 
           begin
@@ -101,7 +101,7 @@ module Metaclean
       Dir.each_child(dir) do |entry|
         next if entry.start_with?('.')
 
-        path = File.join(dir, entry)
+        path = File.join(dir, Metaclean.utf8_path(entry))
         next if File.symlink?(path)
 
         begin

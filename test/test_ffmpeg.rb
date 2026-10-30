@@ -132,4 +132,12 @@ class FfmpegTest < Minitest::Test
       assert_equal 'original', File.read(file)
     end
   end
+
+  def test_file_url_does_not_expand_a_leading_tilde
+    Dir.mktmpdir do |dir|
+      Dir.chdir(dir) do
+        assert_equal "file:#{File.join(Dir.pwd, '~clip.mkv')}", Metaclean::Ffmpeg.file_url('~clip.mkv')
+      end
+    end
+  end
 end
