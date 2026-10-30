@@ -8,4 +8,5 @@
 - [ ] `bundle exec ruby -Itest test/coverage_runner.rb` passes
 - [ ] `bundle exec rubocop` is clean
 - [ ] Added or updated a test for the behavior change
+- [ ] Added a line under `Unreleased` in `CHANGELOG.md` for user-visible changes
 - [ ] The diff is focused on a single logical change
