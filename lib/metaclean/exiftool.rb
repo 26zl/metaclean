@@ -69,12 +69,18 @@ module Metaclean
 
     PRESERVE_TAGS = %w[Orientation ICC_Profile].freeze
 
+    # ExifTool can write these PNG chunks, so -all= would delete them although they only
+    # describe how to show the pixels: gamma, sRGB rendering intent and physical pixel size.
+    PNG_PRESERVE_TAGS = %w[PNG:Gamma PNG:SRGBRendering PNG-pHYs:all].freeze
+
+    PNG_EXTENSIONS = %w[png apng].freeze
+
     def strip!(path, also_delete: [])
       FileOps.regular_stat!(path)
       args = ['exiftool', '-all=', '-gps:all=']
       also_delete.each { |tag| args << "-#{tag}=" }
       args.concat(['-tagsfromfile', '@'])
-      PRESERVE_TAGS.each { |tag| args << "-#{tag}" }
+      preserve_tags_for(path).each { |tag| args << "-#{tag}" }
       args.concat(['-overwrite_original', '-q', '-q', '-api', 'largefilesupport=1', Metaclean.safe_path(path)])
 
       _out, err, status = Metaclean.capture3(*args)
@@ -85,6 +91,12 @@ module Metaclean
       return :unsupported if err.match?(WRITE_UNSUPPORTED_RE)
 
       raise Error, "ExifTool strip failed: #{err.strip}"
+    end
+
+    def preserve_tags_for(path)
+      return PRESERVE_TAGS unless PNG_EXTENSIONS.include?(Metaclean.ext_of(path))
+
+      PRESERVE_TAGS + PNG_PRESERVE_TAGS
     end
   end
 end

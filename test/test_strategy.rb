@@ -232,6 +232,33 @@ class StrategyTest < Minitest::Test
     end
   end
 
+  def test_png_is_exiftool_only_because_mat2_re_renders_it
+    Metaclean::Mat2.stub(:available?, true) do
+      Metaclean::Mat2.stub(:supports?, true) do
+        assert_equal %i[exiftool], S.tools_for('a.png')
+        assert_equal %i[exiftool], S.tools_for('/x/y.PNG'), 'should be case-insensitive'
+      end
+    end
+  end
+
+  def test_png_profile_name_is_gated_with_the_icc_profile
+    standard = { 'PNG:ProfileName' => 'icm', 'ICC_Profile:ProfileDescription' => 'sRGB IEC61966-2.1' }
+    assert_empty residual(standard), 'the iCCP name of a standard colour space is not identifying'
+
+    custom = { 'PNG:ProfileName' => 'Jane Doe Studio', 'ICC_Profile:ProfileDescription' => 'Jane Doe Studio Profile' }
+    refute_empty residual(custom)
+    assert_empty residual(custom, allow_icc_metadata: true)
+    refute_empty residual('IFD0:ProfileName' => 'Jane Custom'), 'a DNG camera profile name is still flagged'
+  end
+
+  def test_icc_key_covers_icc_groups_and_the_png_profile_name
+    assert S.icc_key?('ICC_Profile:ProfileCopyright')
+    assert S.icc_key?('ICC-header:ProfileCreator')
+    assert S.icc_key?('PNG:ProfileName')
+    refute S.icc_key?('PNG:Gamma')
+    refute S.icc_key?('IFD0:ProfileName')
+  end
+
   def test_every_declared_mat2_extension_is_routed_or_intentionally_exiftool_only
     excluded = %w[pdf] + S::MAT2_DEGRADES
     Metaclean::Mat2.stub(:available?, true) do

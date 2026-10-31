@@ -75,6 +75,36 @@ class ExiftoolTest < Minitest::Test
     assert_includes captured, '-ICC_Profile'
   end
 
+  def test_png_strip_copies_back_the_rendering_chunks
+    captured = nil
+    Dir.mktmpdir do |dir|
+      file = File.join(dir, 'a.png')
+      File.write(file, 'bytes')
+      Metaclean.stub(:capture3, ->(*a) { captured = a; ['', '', status(true)] }) do
+        Metaclean::Exiftool.strip!(file)
+      end
+    end
+    assert_includes captured, '-all='
+    copy_back = captured[(captured.index('-tagsfromfile') + 2)..]
+    %w[-Orientation -ICC_Profile -PNG:Gamma -PNG:SRGBRendering -PNG-pHYs:all].each do |tag|
+      assert_includes copy_back, tag, "#{tag} must be copied back from the original after -tagsfromfile @"
+    end
+  end
+
+  def test_png_rendering_chunks_are_only_requested_for_png
+    captured = nil
+    Dir.mktmpdir do |dir|
+      file = File.join(dir, 'a.jpg')
+      File.write(file, 'bytes')
+      Metaclean.stub(:capture3, ->(*a) { captured = a; ['', '', status(true)] }) do
+        Metaclean::Exiftool.strip!(file)
+      end
+    end
+    refute_includes captured, '-PNG:Gamma'
+    assert_equal Metaclean::Exiftool::PRESERVE_TAGS, Metaclean::Exiftool.preserve_tags_for('x.jpg')
+    assert_equal Metaclean::Exiftool.preserve_tags_for('x.png'), Metaclean::Exiftool.preserve_tags_for('x.APNG')
+  end
+
   def test_unsupported_write_format_returns_soft_skip
     err = 'Error: Writing of DOCX files is not yet supported'
     Dir.mktmpdir do |dir|

@@ -27,9 +27,20 @@ tags; the compare links at the bottom show the complete diffs.
   displayed.
 - The confirmation prompt is written to stderr, so it stays visible when stdout
   is redirected to a file.
+- A PNG colour profile (`iCCP`) is retained and gated like in other formats:
+  its profile name is treated as part of the profile, so a standard colour
+  space cleans normally and a custom profile needs `--allow-icc-metadata`.
 
 ### Changed
 
+- PNG files are cleaned by ExifTool alone instead of mat2 followed by ExifTool.
+  mat2 rebuilt the image through cairo, which turned palette and 16-bit
+  greyscale PNGs into RGB(A) and dropped the `gAMA` chunk and the embedded
+  colour profile. The new route removes every `tEXt`, `zTXt` and `iTXt` chunk
+  (including XMP), `eXIf` and `tIME`, also after the image data, and keeps the
+  pixel data, palette, bit depth, colour type and the `gAMA`, `cHRM`, `sRGB`,
+  `sBIT`, `bKGD` and `pHYs` chunks byte for byte. ExifTool's `-all=` would
+  also delete `gAMA`, `sRGB` and `pHYs`, so they are copied back explicitly.
 - `Metaclean.safe_path` also anchors relative names beginning with `@`, which
   qpdf would otherwise read as an argument file.
 - The gem's `changelog_uri` points at this file, which is now shipped in the gem.

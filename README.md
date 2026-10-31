@@ -22,7 +22,7 @@ diff of exactly what was removed.
 It wraps four external tools and routes each file to the right one:
 
 - **ExifTool** — the broadest format coverage (EXIF, IPTC, XMP, GPS, ID3, …)
-- **mat2** — stricter on `.docx` / `.png` and Office/OpenDocument files (rebuilds the file)
+- **mat2** — stricter on `.docx` and the other Office/OpenDocument files (rebuilds the file)
 - **qpdf** — rebuilds PDFs and clears residual metadata in unused streams
 - **ffmpeg** — strips the Matroska containers (`.mkv` / `.webm`) the others can't write, by remuxing losslessly (stream copy, no re-encode)
 
@@ -36,7 +36,8 @@ It wraps four external tools and routes each file to the right one:
   **original, with all its metadata** — delete or move the `.bak` files before
   sharing an in-place-cleaned folder.
 - **Content-preserving routing:** it keeps image orientation, avoids lossy
-  raster paths, and preserves Matroska chapters and languages.
+  raster paths, keeps PNG pixels, palettes, bit depth and rendering chunks
+  byte for byte, and preserves Matroska chapters and languages.
 - **Nested-content guard:** PDFs and Matroska files with attachments or cover
   art fail closed until their embedded payloads can be independently cleaned.
 - **Batch-friendly:** failed, unsupported or unverified files exit non-zero, so
@@ -184,6 +185,15 @@ Support still depends on the installed ExifTool/mat2/qpdf/ffmpeg versions.
 Unknown or unsupported formats are never treated as success. PDFs and Matroska
 files containing attachments or cover-art streams are reported unverified or
 failed and are not written.
+
+PNG files are cleaned by ExifTool alone. Every `tEXt`, `zTXt` and `iTXt` chunk
+(including XMP), the `eXIf` chunk and the `tIME` timestamp are removed, also
+when they sit after the image data, while the pixel data, palette, bit depth,
+colour type and the `gAMA`, `cHRM`, `sRGB`, `sBIT`, `bKGD` and `pHYs` chunks
+are kept unchanged. As with JPEG, an EXIF `Orientation` is kept, and an
+embedded colour profile (`iCCP`) follows the ICC rules below. mat2 is not used
+for PNG because its rebuild re-renders the image, which converts palette and
+16-bit greyscale files to RGB and drops `gAMA`.
 
 ICC profiles are retained because removing them can change color rendering.
 Recognized standard color spaces (sRGB, Display P3, Adobe RGB, the generic
