@@ -28,7 +28,7 @@ module Metaclean
     ].freeze
 
     MAT2_PREFERRED = %w[
-      docx xlsx pptx odt ods odp odg odf odc odi epub png svg svgz
+      docx xlsx pptx odt ods odp odg odf odc odi epub svg svgz
       mp4 avi
     ].freeze
 
@@ -37,7 +37,12 @@ module Metaclean
     ICC_PRIVACY_TAGS = %w[
       ProfileDescription ProfileDescriptionML ProfileCopyright ProfileCreator
       ProfileCMMType DeviceManufacturer DeviceModel DeviceMfgDesc DeviceModelDesc
+      ProfileName
     ].freeze
+
+    # Reported outside the ICC groups but part of the embedded profile: the name field of a
+    # PNG iCCP chunk. It is gated together with the profile it labels.
+    ICC_ADJUNCT_KEYS = %w[PNG:ProfileName].freeze
 
     ICC_STANDARD_DESCRIPTIONS = [
       'srgb iec61966-2.1', 'srgb', 'srgb iec61966-2-1 black scaled',
@@ -53,7 +58,10 @@ module Metaclean
 
     FFMPEG_FORMATS = %w[mkv webm].freeze
 
-    MAT2_DEGRADES = %w[jpg jpe jpeg webp tif tiff heic].freeze
+    # mat2 re-encodes these instead of editing them: JPEG, WebP, TIFF and HEIC lossily, and
+    # PNG through a cairo re-render that drops gAMA and turns palette and 16-bit greyscale
+    # images into RGB(A). ExifTool removes their metadata without touching the image data.
+    MAT2_DEGRADES = %w[jpg jpe jpeg webp tif tiff heic png].freeze
 
     module_function
 
@@ -87,8 +95,9 @@ module Metaclean
         name = tag.nil? ? group.to_s : tag
         next false if RESIDUAL_IGNORED_GROUPS.include?(group.to_s)
 
-        icc_privacy = group.to_s.start_with?('ICC') && ICC_PRIVACY_TAGS.include?(name)
-        if group.to_s.start_with?('ICC')
+        icc = icc_key?(key)
+        icc_privacy = icc && ICC_PRIVACY_TAGS.include?(name)
+        if icc
           next false if allow_icc_metadata || standard_icc
           next false unless icc_privacy
         end
@@ -98,6 +107,11 @@ module Metaclean
 
         icc_privacy || privacy_group?(group) || privacy_tag?(name)
       end
+    end
+
+    def icc_key?(key)
+      k = key.to_s
+      k.start_with?('ICC') || ICC_ADJUNCT_KEYS.include?(k)
     end
 
     def standard_icc_profile?(meta)

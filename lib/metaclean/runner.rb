@@ -162,7 +162,7 @@ module Metaclean
           warn "    #{Display.c(key, :yellow)} = #{Display.truncate(Display.visible_value(value), 60)}"
         end
       end
-      if residual.keys.all? { |key| key.to_s.start_with?('ICC') }
+      if residual.keys.all? { |key| Strategy.icc_key?(key) }
         Display.warning 'Only ICC profile text remains — review it and pass --allow-icc-metadata to accept it.'
       end
       residual

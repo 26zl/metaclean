@@ -34,10 +34,11 @@ strip/verify flow locally. CI installs all four on Linux.
 ### The real-file format matrix
 
 `test/test_format_matrix.rb` exercises every major routing family with real
-files. Focused integration tests cover DNG identity tags, HTML and structured
-Matroska files. Together they assert that a verified clean loses identifying
-metadata while functional image/container structure remains intact. The matrix
-is **opt-in** because it needs extra generators:
+files. Focused integration tests cover DNG identity tags, PNG chunk structure,
+HTML and structured Matroska files. Together they assert that a verified clean
+loses identifying metadata while functional image/container structure remains
+intact (PNG is compared chunk by chunk). The matrix is **opt-in** because it
+needs extra generators:
 
 ```bash
 METACLEAN_FORMAT_MATRIX=1 bundle exec ruby -Itest test/test_format_matrix.rb

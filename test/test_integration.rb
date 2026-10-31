@@ -7,6 +7,10 @@ require 'open3'
 
 class IntegrationTest < Minitest::Test
   TINY_JPEG = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/wAALCAAQABABAREA/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAA/AKpgP//Z'
+  PNG_XMP = '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/">' \
+            '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" ' \
+            'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator><rdf:Seq><rdf:li>Jane Doe</rdf:li></rdf:Seq>' \
+            '</dc:creator></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>'
 
   def test_exiftool_read_returns_a_hash
     skip 'exiftool not installed' unless Metaclean::Exiftool.available?
@@ -83,6 +87,62 @@ class IntegrationTest < Minitest::Test
       after = Metaclean::Exiftool.read(File.join(d, 'profiled_clean.jpg'))
       assert(after.keys.any? { |key| key.start_with?('ICC') }, 'the color profile is retained')
       refute after.key?('IFD0:Artist'), 'identifying EXIF is still removed'
+    end
+  end
+
+  def test_png_clean_removes_every_metadata_chunk_and_keeps_the_rest_byte_for_byte
+    skip 'exiftool not installed' unless Metaclean::Exiftool.available?
+
+    %i[palette gray16 rgba].each do |kind|
+      Dir.mktmpdir do |d|
+        file = File.join(d, "#{kind}.png")
+        File.binwrite(file, png_sample(kind))
+        before = PngChunks.read(file)
+        refute_empty Metaclean::Strategy.privacy_residual(Metaclean::Exiftool.read(file)), "#{kind}: precondition"
+        pixels = decoded_video_hash(file) if Metaclean::Ffmpeg.available?
+
+        result = nil
+        capture_io { result = Metaclean::Runner.new({}).send(:clean_one, file, index: 1, total: 1) }
+        assert_equal :cleaned, result[:status], kind
+
+        cleaned = File.join(d, "#{kind}_clean.png")
+        after = PngChunks.read(cleaned)
+        assert_empty after.map(&:first) & PngChunks::METADATA_TYPES, "#{kind}: a metadata chunk survived"
+        kept = before.reject { |type, _| PngChunks::METADATA_TYPES.include?(type) }
+        assert_equal PngChunks.fingerprint(kept).sort, PngChunks.fingerprint(after).sort,
+                     "#{kind}: every non-metadata chunk must survive byte for byte"
+        assert PngChunks.ordered?(after), "#{kind}: chunk order violates the PNG specification: #{after.map(&:first)}"
+        assert_equal pixels, decoded_video_hash(cleaned), "#{kind}: pixels changed" if pixels
+        embedded = Metaclean::Exiftool.read(cleaned).keys.select { |key| Metaclean::Display.embedded_key?(key) }
+        assert_empty embedded.grep(/Author|Artist|Creator|Comment|Title|Software|Description|ModifyDate/),
+                     "#{kind}: metadata tags survived"
+      end
+    end
+  end
+
+  def test_png_keeps_orientation_and_a_standard_icc_profile_while_removing_identity
+    skip 'exiftool not installed' unless Metaclean::Exiftool.available?
+
+    Dir.mktmpdir do |d|
+      file = File.join(d, 'oriented.png')
+      File.binwrite(file, png_sample(:oriented))
+      profile = standard_srgb_profile
+      system('exiftool', '-q', '-overwrite_original', "-ICC_Profile<=#{profile}", file, exception: true) if profile
+      icc_before = PngChunks.read(file).assoc('iCCP')
+
+      result = nil
+      capture_io { result = Metaclean::Runner.new({}).send(:clean_one, file, index: 1, total: 1) }
+      assert_equal :cleaned, result[:status], 'orientation and a standard colour profile must not block a PNG clean'
+
+      cleaned = File.join(d, 'oriented_clean.png')
+      after = Metaclean::Exiftool.read(cleaned)
+      assert_equal 6, after['IFD0:Orientation']
+      refute after.key?('IFD0:Artist')
+      refute after.key?('PNG:Author')
+      if profile
+        assert_equal icc_before, PngChunks.read(cleaned).assoc('iCCP'), 'the iCCP chunk is kept byte for byte'
+        assert after.key?('PNG:ProfileName'), 'the profile name stays with its profile'
+      end
     end
   end
 
@@ -376,6 +436,86 @@ class IntegrationTest < Minitest::Test
     raise "ffmpeg could not decode #{path}" if output.empty?
 
     Digest::SHA256.hexdigest(output.lines.reject { |line| line.start_with?('#') }.join)
+  end
+
+  def standard_srgb_profile
+    Dir[
+      '/System/Library/ColorSync/Profiles/sRGB Profile.icc',
+      '/usr/share/color/icc/**/sRGB*.icc',
+      '/usr/share/color/icc/**/*sRGB*.icc'
+    ].first
+  end
+
+  # Hand-built PNGs with a controlled chunk set: rendering chunks that must survive, and
+  # tEXt/zTXt/iTXt (including XMP), tIME and eXIf metadata both before and after IDAT.
+  def png_sample(kind)
+    PngChunks::SIGNATURE + send(:"png_#{kind}_parts").join + PngChunks.chunk('IEND', '')
+  end
+
+  def png_palette_parts
+    rows = (0..3).map { |y| [(y << 4) | ((y + 1) % 4), (((y + 2) % 4) << 4) | ((y + 3) % 4)].pack('C*') }
+    [png_header(4, 3), png_gama, png_phys, *png_metadata,
+     PngChunks.chunk('PLTE', [255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 0].pack('C*')),
+     PngChunks.chunk('tRNS', [255, 128, 64, 0].pack('C*')), PngChunks.chunk('bKGD', [1].pack('C')),
+     png_image_data(rows), *png_trailing_metadata]
+  end
+
+  def png_gray16_parts
+    rows = (0..3).map { |y| (0..3).map { |x| ((y * 4) + x) * 4369 }.pack('n*') }
+    [png_header(16, 0), png_gama, png_chrm, PngChunks.chunk('sBIT', [16].pack('C')),
+     PngChunks.chunk('bKGD', [0].pack('n')), *png_metadata, png_image_data(rows), *png_trailing_metadata]
+  end
+
+  def png_rgba_parts
+    rows = (0..3).map { |y| (0..3).flat_map { |x| [x * 80, y * 80, 255 - (x * 60), 255 - (y * 40)] }.pack('C*') }
+    [png_header(8, 6), PngChunks.chunk('sRGB', [0].pack('C')), png_gama, png_chrm, png_phys,
+     PngChunks.chunk('bKGD', [0, 0, 0].pack('n3')), *png_metadata, png_image_data(rows), *png_trailing_metadata]
+  end
+
+  def png_oriented_parts
+    rows = (0..3).map { |y| (0..3).flat_map { |x| [x * 80, y * 80, 128] }.pack('C*') }
+    [png_header(8, 2), png_gama, png_exif_chunk('Jane Doe', orientation: 6),
+     PngChunks.chunk('tEXt', "Author\0Jane Doe"), png_image_data(rows)]
+  end
+
+  def png_header(depth, colour_type)
+    PngChunks.chunk('IHDR', [4, 4, depth, colour_type, 0, 0, 0].pack('NNCCCCC'))
+  end
+
+  def png_gama = PngChunks.chunk('gAMA', [45_455].pack('N'))
+  def png_phys = PngChunks.chunk('pHYs', [2835, 2835, 1].pack('NNC'))
+
+  def png_chrm
+    PngChunks.chunk('cHRM', [31_270, 32_900, 64_000, 33_000, 30_000, 60_000, 15_000, 6_000].pack('N8'))
+  end
+
+  def png_image_data(rows)
+    PngChunks.chunk('IDAT', Zlib::Deflate.deflate(rows.map { |row| "\x00".b + row }.join))
+  end
+
+  def png_metadata
+    [PngChunks.chunk('tEXt', "Author\0Jane Doe"),
+     PngChunks.chunk('zTXt', "Comment\0\0#{Zlib::Deflate.deflate('secret note')}"),
+     PngChunks.chunk('iTXt', "Title\0\0\0en\0\0Private title"),
+     PngChunks.chunk('iTXt', "XML:com.adobe.xmp\0\0\0\0\0#{PNG_XMP}"),
+     PngChunks.chunk('tIME', [2026, 10, 31, 12, 34, 56].pack('nCCCCC')),
+     png_exif_chunk('Jane Doe')]
+  end
+
+  def png_trailing_metadata
+    [PngChunks.chunk('tEXt', "Software\0PrivateTool 1.0"),
+     PngChunks.chunk('zTXt', "Description\0\0#{Zlib::Deflate.deflate('after IDAT')}")]
+  end
+
+  # A minimal little-endian EXIF block: IFD0 with Artist and, optionally, Orientation.
+  def png_exif_chunk(artist, orientation: nil)
+    entries = orientation ? 2 : 1
+    data_offset = 8 + 2 + (12 * entries) + 4
+    ifd = [entries].pack('v')
+    ifd << [0x0112, 3, 1].pack('vvV') << [orientation].pack('v') << "\0\0".b if orientation
+    artist = "#{artist}\0".b
+    ifd << [0x013B, 2, artist.bytesize, data_offset].pack('vvVV') << [0].pack('V')
+    PngChunks.chunk('eXIf', "II*\0".b + [8].pack('V') + ifd + artist)
   end
 
   def executable?(name)

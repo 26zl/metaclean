@@ -30,11 +30,34 @@ class FormatMatrixTest < Minitest::Test
         tested << ext
         assert still_leaks?(f), "#{ext}: metadata marker was not written" unless UNTAGGABLE_IMAGES.include?(ext)
         before = pixels(f)
+        chunks = PngChunks.read(f) if ext == 'png'
         assert_clean(ext, f)
         assert_equal before, pixels(f), "#{ext}: pixels changed — clean was not lossless" if before
+        assert_png_chunks_preserved(ext, chunks, f) if chunks
       end
     end
     assert_equal formats, tested, 'every listed image format must be generated and tested'
+  end
+
+  def test_png_variants_keep_palette_bit_depth_and_rendering_chunks
+    tested = []
+    variants = { 'palette' => 'pal8', 'gray16' => 'gray16be', 'rgba' => 'rgba', 'rgb16' => 'rgb48be' }
+    variants.each do |label, pix_fmt|
+      Dir.mktmpdir do |d|
+        f = File.join(d, "#{label}.png")
+        next unless gen_png(f, pix_fmt)
+
+        tested << label
+        assert still_leaks?(f), "#{label}: precondition — metadata marker was not written"
+        before = pixels(f)
+        chunks = PngChunks.read(f)
+        assert_clean(label, f)
+        assert_equal before, pixels(f), "#{label}: pixels changed — clean was not lossless" if before
+        assert_equal chunks.first, PngChunks.read(f).first, "#{label}: IHDR (bit depth / colour type) changed"
+        assert_png_chunks_preserved(label, chunks, f)
+      end
+    end
+    assert_equal variants.keys, tested, 'every PNG variant must be generated and tested'
   end
 
   def test_audio_clean_losslessly_without_false_clean
@@ -164,6 +187,15 @@ class FormatMatrixTest < Minitest::Test
     refute still_leaks?(path), "#{ext}: FALSE-CLEAN — a metadata marker survived a :cleaned report"
   end
 
+  def assert_png_chunks_preserved(label, before, path)
+    after = PngChunks.read(path)
+    assert_empty after.map(&:first) & PngChunks::METADATA_TYPES, "#{label}: a PNG metadata chunk survived a :cleaned report"
+    kept = before.reject { |type, _| PngChunks::METADATA_TYPES.include?(type) }
+    assert_equal PngChunks.fingerprint(kept).sort, PngChunks.fingerprint(after).sort,
+                 "#{label}: non-metadata PNG chunks must survive byte for byte"
+    assert PngChunks.ordered?(after), "#{label}: chunk order violates the PNG specification: #{after.map(&:first).join(' ')}"
+  end
+
   def clean_status(path)
     status = nil
     capture_io { status = Metaclean::Runner.new(in_place: true).send(:clean_one, path, index: 1, total: 1)[:status] }
@@ -221,6 +253,21 @@ class FormatMatrixTest < Minitest::Test
                 end
     return unless generated && made?(path)
 
+    tag_image(path)
+  end
+
+  # ffmpeg writes the requested pixel format and, with -dpi, a pHYs chunk.
+  def gen_png(path, pix_fmt)
+    return unless have?('ffmpeg')
+
+    sh('ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=s=32x32:d=0.1', '-frames:v', '1',
+       '-pix_fmt', pix_fmt, '-dpi', '72', path)
+    return unless made?(path)
+
+    tag_image(path)
+  end
+
+  def tag_image(path)
     tagged = sh('exiftool', '-q', '-overwrite_original', "-Artist=#{MARKER}", "-XMP-dc:Creator=#{MARKER}",
                 "-Comment=#{MARKER}", '-GPSLatitude=59.9', '-GPSLatitudeRef=N',
                 '-GPSLongitude=10.7', '-GPSLongitudeRef=E', path)
