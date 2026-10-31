@@ -69,4 +69,16 @@ class CommandTest < Minitest::Test
     assert_operator (Time.now - started), :<, 10,
                     'an interrupt must not leave capture3 blocked on a live child'
   end
+
+  def test_capture3_normalizes_tool_output_to_valid_utf8
+    out, err, status = Metaclean.capture3('sh', '-c', 'printf "Z\\374rich caf\\303\\251"; printf "\\377" >&2')
+    assert status.success?
+    [out, err].each do |text|
+      assert_equal Encoding::UTF_8, text.encoding
+      assert text.valid_encoding?, 'a stray non-ASCII byte must not poison later regexp matches or messages'
+    end
+    assert_includes out, 'café', 'valid UTF-8 passes through unchanged'
+    assert_equal "�", err
+    assert_equal "✗ sh: � — continuing", "✗ sh: #{err} — continuing"
+  end
 end

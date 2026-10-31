@@ -74,8 +74,8 @@ jobs:
     needs: [verify, ruby-compat]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: write # attach the built gem to the GitHub Release
+      id-token: write # OIDC token for RubyGems Trusted Publishing (rubygems/release-gem); there is no API-key secret
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

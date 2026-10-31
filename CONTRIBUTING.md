@@ -61,6 +61,8 @@ Termux and non-POSIX filesystems.
 - Add or update a test for any behavior change — especially anything touching
   the strip/verify pipeline or the in-place/backup write path.
 - `bundle exec rake test` and `bundle exec rubocop` must pass.
+- Add a line under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) for any
+  user-visible change.
 - Follow the existing house style (the tuned `.rubocop.yml` encodes it).
 
 ## Reporting bugs and security issues

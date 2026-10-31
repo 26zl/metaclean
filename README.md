@@ -204,7 +204,9 @@ secret**; the one-time prerequisite is registering this gem's Trusted Publisher
 on rubygems.org.
 
 Replace `X.Y.Z` with the version in `lib/metaclean/version.rb` — the release
-workflow refuses to publish if the tag and that version disagree.
+workflow refuses to publish if the tag and that version disagree. Before
+tagging, move the `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under
+the new version.
 
 ```bash
 git tag vX.Y.Z

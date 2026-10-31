@@ -18,6 +18,20 @@ class RunnerTest < Minitest::Test
     assert_equal './-config', Metaclean.safe_path('-config')
     assert_equal '/abs/-x',   Metaclean.safe_path('/abs/-x')
     assert_equal './-x',      Metaclean.safe_path('./-x')
+    assert_equal './@args.pdf', Metaclean.safe_path('@args.pdf'), 'qpdf reads @name as an argument file'
+    assert_equal '/abs/@x',   Metaclean.safe_path('/abs/@x')
+  end
+
+  def test_utf8_path_retags_locale_strings_without_changing_bytes
+    ascii = 'café.jpg'.b.force_encoding(Encoding::US_ASCII)
+    binary = 'café.jpg'.b
+    [ascii, binary].each do |path|
+      out = Metaclean.utf8_path(path)
+      assert_equal Encoding::UTF_8, out.encoding
+      assert_equal 'café.jpg', out
+      assert_equal path.b, out.b, 'the bytes handed to the filesystem must not change'
+    end
+    assert_equal 'café.jpg', Metaclean.utf8_path('café.jpg')
   end
 
   def test_ensure_tools_raises_listing_missing
@@ -569,6 +583,41 @@ class RunnerTest < Minitest::Test
     end
   end
 
+  def test_expand_files_accepts_tilde_prefixed_names_as_literal_files
+    Dir.mktmpdir do |d|
+      Dir.chdir(d) do
+        File.write('~$report.docx', 'x')
+        File.write('~backup.jpg', 'x')
+        assert_equal ['~$report.docx', '~backup.jpg'], expand({}, ['~$report.docx', '~backup.jpg'])
+      end
+    end
+  end
+
+  def test_expand_files_retags_locale_encoded_arguments_and_entries_as_utf8
+    Dir.mktmpdir do |d|
+      file = File.join(d, 'café.jpg')
+      File.write(file, 'x')
+      # Under LC_ALL=C, ARGV strings arrive tagged US-ASCII (Linux) or binary (macOS) and
+      # Dir entries tagged US-ASCII, although the bytes are UTF-8.
+      argv_file = file.b
+      argv_dir = d.b.force_encoding(Encoding::US_ASCII)
+      entries = ['café.jpg'.b.force_encoding(Encoding::US_ASCII)]
+
+      files = nil
+      capture_io do
+        Dir.stub(:children, ->(*) { entries }) do
+          files = Metaclean::Runner.new({}).send(:expand_files, [argv_file, argv_dir])
+        end
+      end
+      assert_equal 1, files.size, 'the explicit argument and the scanned entry are the same file'
+      path = files.first
+      assert_equal Encoding::UTF_8, path.encoding
+      assert path.valid_encoding?
+      assert File.file?(path)
+      assert_equal 'café.jpg', File.basename(path)
+    end
+  end
+
   def run_in_place(runner, src, content)
     out = nil
     capture_io do
@@ -848,10 +897,11 @@ class RunnerTest < Minitest::Test
     r = Metaclean::Runner.new({})
     ran = []
     status = 0
+    out = err = nil
     orig = $stdin
     $stdin = StringIO.new(input)
     begin
-      capture_io do
+      out, err = capture_io do
         r.stub(:expand_files, ['photo.jpg']) do
           r.stub(:announce_tools, nil) do
             r.stub(:clean_one, ->(*) { ran << :ran; { status: :cleaned, removed: 0, residual: 0 } }) do
@@ -863,9 +913,16 @@ class RunnerTest < Minitest::Test
     rescue SystemExit => e
       status = e.status
     end
-    [ran, status]
+    [ran, status, out, err]
   ensure
     $stdin = orig
+  end
+
+  def test_confirmation_prompt_is_written_to_stderr
+    _ran, _status, out, err = run_with_stdin("y\n")
+    assert_match(/About to create cleaned copies of 1 file\(s\)\./, err)
+    assert_match(%r{Proceed\? \[y/N\]}, err, 'the prompt must stay visible when stdout is redirected to a file')
+    refute_match(/Proceed\?/, out)
   end
 
   def test_confirmation_prompt_proceeds_on_yes
